@@ -1,0 +1,11 @@
+[package]
+name = "sand"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "find_magics"
+path = "src/find_magics.rs"
+
+[dependencies]
+rand = "0.9.2"
