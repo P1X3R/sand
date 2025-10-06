@@ -6,32 +6,32 @@ use crate::{
     board::*,
 };
 
-pub fn gen_pawn_pushes(sq: isize, occ: u64, color: Color) -> u64 {
-    assert!(sq >= 0 && sq < BOARD_SIZE as isize);
+pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
+    debug_assert!(square < BOARD_SIZE as u8);
 
-    let pawn_bit: u64 = 1u64 << sq;
+    let pawn_bit: u64 = 1u64 << square;
 
     match color {
         Color::White => {
-            let single: u64 = (pawn_bit << BOARD_WIDTH) & !occ;
-            let double: u64 = ((single & RANK_BB_3) << BOARD_WIDTH) & !occ;
+            let single: u64 = (pawn_bit << BOARD_WIDTH) & !occupancy;
+            let double: u64 = ((single & RANKS[2]) << BOARD_WIDTH) & !occupancy;
 
             single | double
         }
         Color::Black => {
-            let single: u64 = (pawn_bit >> BOARD_WIDTH) & !occ;
-            let double: u64 = ((single & RANK_BB_6) >> BOARD_WIDTH) & !occ;
+            let single: u64 = (pawn_bit >> BOARD_WIDTH) & !occupancy;
+            let double: u64 = ((single & RANKS[5]) >> BOARD_WIDTH) & !occupancy;
 
             single | double
         }
     }
 }
 
-pub fn gen_jumping_attacks(sq: isize, offsets: &[Offset]) -> u64 {
-    assert!(sq >= 0 && sq < BOARD_SIZE as isize);
+pub fn gen_jumping_attacks(square: Square, offsets: &[Offset]) -> u64 {
+    debug_assert!(square < BOARD_SIZE as u8);
 
-    let rank = sq / BOARD_WIDTH as isize;
-    let file = sq % BOARD_WIDTH as isize;
+    let rank = square as i8 / BOARD_WIDTH as i8;
+    let file = square as i8 % BOARD_WIDTH as i8;
 
     offsets.iter().fold(0u64, |attacks, offset| {
         let (r, f) = (rank + offset.rank, file + offset.file);
@@ -43,15 +43,15 @@ pub fn gen_jumping_attacks(sq: isize, offsets: &[Offset]) -> u64 {
     })
 }
 
-pub fn gen_edge_mask(sq: usize) -> u64 {
-    assert!(sq < BOARD_SIZE);
+pub fn gen_edge_mask(square: usize) -> u64 {
+    debug_assert!(square < BOARD_SIZE);
 
-    let bit: u64 = 1u64 << sq;
+    let bit: u64 = 1u64 << square;
 
     const FILE_BB_1: u64 = 0x0101010101010101;
     const FILE_BB_8: u64 = 0x8080808080808080;
 
-    [RANK_BB_1, RANK_BB_8, FILE_BB_1, FILE_BB_8]
+    [RANKS[0], RANKS[7], FILE_BB_1, FILE_BB_8]
         .iter()
         .fold(
             0u64,
@@ -59,11 +59,11 @@ pub fn gen_edge_mask(sq: usize) -> u64 {
         )
 }
 
-pub fn gen_sliding_attacks(sq: isize, occ: u64, directions: &[Offset]) -> u64 {
-    assert!(sq >= 0 && sq < BOARD_SIZE as isize);
+pub fn gen_sliding_attacks(square: Square, occupancy: u64, directions: &[Offset]) -> u64 {
+    debug_assert!(square < BOARD_SIZE as u8);
 
-    let rank = sq / BOARD_WIDTH as isize;
-    let file = sq % BOARD_WIDTH as isize;
+    let rank = square as i8 / BOARD_WIDTH as i8;
+    let file = square as i8 % BOARD_WIDTH as i8;
 
     let mut attacks: u64 = 0;
 
@@ -74,7 +74,7 @@ pub fn gen_sliding_attacks(sq: isize, occ: u64, directions: &[Offset]) -> u64 {
         while valid_axis(r) && valid_axis(f) {
             ray |= 1u64 << to_square(r, f);
 
-            if ray & occ != 0 {
+            if ray & occupancy != 0 {
                 break;
             }
 
@@ -89,7 +89,7 @@ pub fn gen_sliding_attacks(sq: isize, occ: u64, directions: &[Offset]) -> u64 {
 }
 
 pub fn get_occupancy(mut variant: usize, mut relevant_mask: u64) -> u64 {
-    assert!(variant < (1 << relevant_mask.count_ones()));
+    debug_assert!(variant < (1 << relevant_mask.count_ones()));
 
     let mut occupancy: u64 = 0;
 
@@ -105,21 +105,18 @@ pub fn get_occupancy(mut variant: usize, mut relevant_mask: u64) -> u64 {
     occupancy
 }
 
-pub fn get_sliding_index(sq: isize, occ: u64, for_bishop: bool) -> usize {
-    assert!(sq >= 0 && sq < BOARD_SIZE as isize);
+#[inline(always)]
+pub fn get_bishop_index(square: usize, occupancy: u64) -> usize {
+    let magic = &magics::BISHOP_MAGICS[square];
+    let variant = (occupancy & tables::BISHOP_RM[square]).wrapping_mul(magic.magic) >> magic.shift;
+    debug_assert!(variant < (1 << tables::BISHOP_RM[square].count_ones()));
+    magic.offset + variant as usize
+}
 
-    let relevant_mask = if for_bishop {
-        tables::BISHOP_RM[sq as usize]
-    } else {
-        tables::ROOK_RM[sq as usize]
-    };
-    let magic = if for_bishop {
-        magics::BISHOP_MAGICS[sq as usize]
-    } else {
-        magics::ROOK_MAGICS[sq as usize]
-    };
-    let variant = (occ & relevant_mask).wrapping_mul(magic.magic) >> magic.shift;
-    assert!(variant < (1 << relevant_mask.count_ones()));
-
+#[inline(always)]
+pub fn get_rook_index(square: usize, occupancy: u64) -> usize {
+    let magic = &magics::ROOK_MAGICS[square];
+    let variant = (occupancy & tables::ROOK_RM[square]).wrapping_mul(magic.magic) >> magic.shift;
+    debug_assert!(variant < (1 << tables::ROOK_RM[square].count_ones()));
     magic.offset + variant as usize
 }

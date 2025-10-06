@@ -1,13 +1,13 @@
 use crate::{
     attacks::movegen::{gen_edge_mask, gen_jumping_attacks, gen_sliding_attacks},
-    board::BOARD_SIZE,
+    board::{BOARD_SIZE, Square},
 };
 use std::sync::LazyLock;
 
 #[derive(Copy, Clone)]
 pub struct Offset {
-    pub rank: isize,
-    pub file: isize,
+    pub rank: i8,
+    pub file: i8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,23 +63,25 @@ pub const BISHOP_DIRECTIONS: [Offset; 4] = [
     Offset { rank: -1, file: -1 }, // southwest
 ];
 
-pub static KNIGHT_ATTACKS: LazyLock<[u64; BOARD_SIZE]> =
-    LazyLock::new(|| std::array::from_fn(|sq| gen_jumping_attacks(sq as isize, &KNIGHT_OFFSETS)));
-pub static KING_ATTACKS: LazyLock<[u64; BOARD_SIZE]> =
-    LazyLock::new(|| std::array::from_fn(|sq| gen_jumping_attacks(sq as isize, &KING_OFFSETS)));
+pub static KNIGHT_ATTACKS: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
+    std::array::from_fn(|square| gen_jumping_attacks(square as Square, &KNIGHT_OFFSETS))
+});
+pub static KING_ATTACKS: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
+    std::array::from_fn(|square| gen_jumping_attacks(square as Square, &KING_OFFSETS))
+});
 pub static WPAWN_ATTACKS: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
-    std::array::from_fn(|sq| gen_jumping_attacks(sq as isize, &PAWN_CAPTURE_OFFSETS_WHITE))
+    std::array::from_fn(|square| gen_jumping_attacks(square as Square, &PAWN_CAPTURE_OFFSETS_WHITE))
 });
 pub static BPAWN_ATTACKS: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
-    std::array::from_fn(|sq| gen_jumping_attacks(sq as isize, &PAWN_CAPTURE_OFFSETS_BLACK))
+    std::array::from_fn(|square| gen_jumping_attacks(square as Square, &PAWN_CAPTURE_OFFSETS_BLACK))
 });
 pub static BISHOP_RM: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
-    std::array::from_fn(|sq| {
-        gen_sliding_attacks(sq as isize, 0, &BISHOP_DIRECTIONS) & !gen_edge_mask(sq)
+    std::array::from_fn(|square| {
+        gen_sliding_attacks(square as Square, 0, &BISHOP_DIRECTIONS) & !gen_edge_mask(square)
     })
 });
 pub static ROOK_RM: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
-    std::array::from_fn(|sq| {
-        gen_sliding_attacks(sq as isize, 0, &ROOK_DIRECTIONS) & !gen_edge_mask(sq)
+    std::array::from_fn(|square| {
+        gen_sliding_attacks(square as Square, 0, &ROOK_DIRECTIONS) & !gen_edge_mask(square)
     })
 });

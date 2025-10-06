@@ -1,26 +1,29 @@
 use rand::{Rng, SeedableRng};
 
-use crate::attacks::{
-    movegen::{gen_sliding_attacks, get_occupancy},
-    tables::{self, Magic, Offset},
+use crate::{
+    attacks::{
+        movegen::{gen_sliding_attacks, get_occupancy},
+        tables::{self, Magic, Offset},
+    },
+    board::Square,
 };
 
 mod attacks;
 mod board;
 
 fn find_magic(
-    sq: isize,
+    square: Square,
     relevant_mask: u64,
     directions: &[Offset],
 ) -> Result<(u64, usize, Vec<u64>), &'static str> {
     let bits = relevant_mask.count_ones() as usize;
     let len = 1 << bits;
 
-    let occ_table: Vec<u64> = (0..len)
+    let occupancies: Vec<u64> = (0..len)
         .map(|variant| get_occupancy(variant, relevant_mask))
         .collect();
-    let att_table: Vec<u64> = (0..len)
-        .map(|variant| gen_sliding_attacks(sq, occ_table[variant], directions))
+    let attacks: Vec<u64> = (0..len)
+        .map(|variant| gen_sliding_attacks(square, occupancies[variant], directions))
         .collect();
 
     let mut rng = rand::rngs::SmallRng::seed_from_u64(1);
@@ -31,13 +34,13 @@ fn find_magic(
 
         let mut collided = false;
         for variant in 0..len {
-            let occ = occ_table[variant];
+            let occupancy = occupancies[variant];
             let magic_index: usize =
-                ((occ.wrapping_mul(magic)) >> (board::BOARD_SIZE - bits)) as usize;
+                ((occupancy.wrapping_mul(magic)) >> (board::BOARD_SIZE - bits)) as usize;
 
             if used[magic_index] == 0 {
-                used[magic_index] = att_table[variant];
-            } else if used[magic_index] != att_table[variant] {
+                used[magic_index] = attacks[variant];
+            } else if used[magic_index] != attacks[variant] {
                 collided = true;
                 break;
             }
@@ -67,14 +70,14 @@ pub fn main() -> Result<(), &'static str> {
 
     print!("use crate::attacks::tables::Magic;\n\n");
 
-    for sq in 0..board::BOARD_SIZE {
+    for square in 0..board::BOARD_SIZE {
         let (magic, bits, mut att_sq) = find_magic(
-            sq as isize,
-            tables::BISHOP_RM[sq],
+            square as Square,
+            tables::BISHOP_RM[square],
             &tables::BISHOP_DIRECTIONS,
         )?;
 
-        bishop_magics[sq] = Magic {
+        bishop_magics[square] = Magic {
             offset: offset,
             magic: magic,
             shift: board::BOARD_SIZE - bits,
@@ -88,11 +91,14 @@ pub fn main() -> Result<(), &'static str> {
         bishop_magics
     );
 
-    for sq in 0..board::BOARD_SIZE {
-        let (magic, bits, mut att_sq) =
-            find_magic(sq as isize, tables::ROOK_RM[sq], &tables::ROOK_DIRECTIONS)?;
+    for square in 0..board::BOARD_SIZE {
+        let (magic, bits, mut att_sq) = find_magic(
+            square as Square,
+            tables::ROOK_RM[square],
+            &tables::ROOK_DIRECTIONS,
+        )?;
 
-        rook_magics[sq] = Magic {
+        rook_magics[square] = Magic {
             offset: offset,
             magic: magic,
             shift: board::BOARD_SIZE - bits,
