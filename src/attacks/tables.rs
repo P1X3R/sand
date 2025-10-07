@@ -1,6 +1,6 @@
 use crate::{
     attacks::movegen::{gen_edge_mask, gen_jumping_attacks, gen_sliding_attacks},
-    board::{BOARD_SIZE, Square},
+    board::{BOARD_SIZE, MoveFlag, MoveType, Piece, Square},
 };
 use std::sync::LazyLock;
 
@@ -85,3 +85,89 @@ pub static ROOK_RM: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
         gen_sliding_attacks(square as Square, 0, &ROOK_DIRECTIONS) & !gen_edge_mask(square)
     })
 });
+
+// Flags are encoded like this:
+// 1 bit    |1 bit  |1 bit   |1 bit
+// Promotion|Capture|Special1|Special0
+pub const FLAGS_LUT: [MoveFlag; 16] = [
+    // 0000
+    MoveFlag {
+        move_type: MoveType::Quiet,
+        promotion: Piece::None,
+    },
+    // 0001
+    MoveFlag {
+        move_type: MoveType::DoublePawnPush,
+        promotion: Piece::None,
+    },
+    // 0010
+    MoveFlag {
+        move_type: MoveType::KingSideCastle,
+        promotion: Piece::None,
+    },
+    // 0011
+    MoveFlag {
+        move_type: MoveType::QueenSideCastle,
+        promotion: Piece::None,
+    },
+    // 0100
+    MoveFlag {
+        move_type: MoveType::Capture,
+        promotion: Piece::None,
+    },
+    // 0101
+    MoveFlag {
+        move_type: MoveType::EnPassantCapture,
+        promotion: Piece::None,
+    },
+    // 0110
+    MoveFlag {
+        move_type: MoveType::Invalid,
+        promotion: Piece::None,
+    },
+    // 0111
+    MoveFlag {
+        move_type: MoveType::Invalid,
+        promotion: Piece::None,
+    },
+    // 1000
+    MoveFlag {
+        move_type: MoveType::Quiet,
+        promotion: Piece::Knight,
+    },
+    // 1001
+    MoveFlag {
+        move_type: MoveType::Quiet,
+        promotion: Piece::Bishop,
+    },
+    // 1010
+    MoveFlag {
+        move_type: MoveType::Quiet,
+        promotion: Piece::Rook,
+    },
+    // 1011
+    MoveFlag {
+        move_type: MoveType::Quiet,
+        promotion: Piece::Queen,
+    },
+    // 1100
+    MoveFlag {
+        move_type: MoveType::Capture,
+        promotion: Piece::Knight,
+    },
+    // 1101
+    MoveFlag {
+        move_type: MoveType::Capture,
+        promotion: Piece::Bishop,
+    },
+    // 1110
+    MoveFlag {
+        move_type: MoveType::Capture,
+        promotion: Piece::Rook,
+    },
+    // 1111
+    MoveFlag {
+        move_type: MoveType::Capture,
+        promotion: Piece::Queen,
+    },
+];
