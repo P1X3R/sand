@@ -1,15 +1,15 @@
 use rand::{Rng, SeedableRng};
 
 use crate::{
-    attacks::{
+    chess::attacks::{
         movegen::{gen_sliding_attacks, get_occupancy},
         tables::{self, Magic, Offset},
     },
-    board::Square,
+    chess::board,
+    chess::board::Square,
 };
 
-mod attacks;
-mod board;
+mod chess;
 
 fn find_magic(
     square: Square,
@@ -68,7 +68,7 @@ pub fn main() -> Result<(), &'static str> {
     let mut sliding_attacks: Vec<u64> = vec![];
     let mut offset = 0;
 
-    print!("use crate::attacks::tables::Magic;\n\n");
+    print!("use crate::chess::attacks::tables::Magic;\n\n");
 
     for square in 0..board::BOARD_SIZE {
         let (magic, bits, mut att_sq) = find_magic(

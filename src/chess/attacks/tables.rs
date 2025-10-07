@@ -1,6 +1,6 @@
 use crate::{
-    attacks::movegen::{gen_edge_mask, gen_jumping_attacks, gen_sliding_attacks},
-    board::{BOARD_SIZE, MoveFlag, MoveType, Piece, Square},
+    chess::attacks::movegen::{gen_edge_mask, gen_jumping_attacks, gen_sliding_attacks},
+    chess::board::{BOARD_SIZE, MoveFlag, MoveType, Piece, Square},
 };
 use std::sync::LazyLock;
 

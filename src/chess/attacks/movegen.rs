@@ -1,4 +1,4 @@
-use crate::{
+use crate::chess::{
     attacks::{
         magics,
         tables::{self, Offset},
@@ -106,17 +106,48 @@ pub fn get_occupancy(mut variant: usize, mut relevant_mask: u64) -> u64 {
 }
 
 #[inline(always)]
-pub fn get_bishop_index(square: usize, occupancy: u64) -> usize {
-    let magic = &magics::BISHOP_MAGICS[square];
-    let variant = (occupancy & tables::BISHOP_RM[square]).wrapping_mul(magic.magic) >> magic.shift;
-    debug_assert!(variant < (1 << tables::BISHOP_RM[square].count_ones()));
+pub fn get_bishop_index(square: Square, occupancy: u64) -> usize {
+    let magic = &magics::BISHOP_MAGICS[square as usize];
+    let variant =
+        (occupancy & tables::BISHOP_RM[square as usize]).wrapping_mul(magic.magic) >> magic.shift;
+    debug_assert!(variant < (1 << tables::BISHOP_RM[square as usize].count_ones()));
     magic.offset + variant as usize
 }
 
 #[inline(always)]
-pub fn get_rook_index(square: usize, occupancy: u64) -> usize {
-    let magic = &magics::ROOK_MAGICS[square];
-    let variant = (occupancy & tables::ROOK_RM[square]).wrapping_mul(magic.magic) >> magic.shift;
-    debug_assert!(variant < (1 << tables::ROOK_RM[square].count_ones()));
+pub fn get_rook_index(square: Square, occupancy: u64) -> usize {
+    let magic = &magics::ROOK_MAGICS[square as usize];
+    let variant =
+        (occupancy & tables::ROOK_RM[square as usize]).wrapping_mul(magic.magic) >> magic.shift;
+    debug_assert!(variant < (1 << tables::ROOK_RM[square as usize].count_ones()));
     magic.offset + variant as usize
+}
+
+pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
+    let friendly = board.occupancies[color as usize];
+    let occupancy_all = friendly | board.occupancies[color.toggle() as usize];
+
+    debug_assert!(board.pieces[square as usize] == (piece, color));
+    debug_assert!(friendly & (1u64 << square) != 0);
+
+    match piece {
+        Piece::Pawn => {
+            gen_pawn_pushes(square, occupancy_all, color)
+                | (match color {
+                    Color::White => tables::WPAWN_ATTACKS[square as usize],
+                    Color::Black => tables::BPAWN_ATTACKS[square as usize],
+                })
+        }
+        Piece::Knight => tables::KNIGHT_ATTACKS[square as usize] & !friendly,
+        Piece::Bishop => {
+            magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)] & !friendly
+        }
+        Piece::Rook => magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)] & !friendly,
+        Piece::Queen => {
+            gen_piece_moves(square, Piece::Bishop, color, board)
+                | gen_piece_moves(square, Piece::Rook, color, board)
+        }
+        Piece::King => tables::KING_ATTACKS[square as usize],
+        Piece::None => unreachable!(),
+    }
 }

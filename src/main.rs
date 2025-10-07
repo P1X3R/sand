@@ -1,5 +1,6 @@
-mod attacks;
-mod board;
+mod chess;
+
+use chess::{attacks, board};
 
 fn print_bitboard(bitboard: u64) {
     println!();

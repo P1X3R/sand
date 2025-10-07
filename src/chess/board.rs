@@ -47,9 +47,9 @@ impl Castling {
 }
 
 pub struct Board {
-    pieces: [(Piece, Color); BOARD_SIZE],
+    pub pieces: [(Piece, Color); BOARD_SIZE],
     bitboards: [[u64; 6]; 2], // 6 piece types for 2 colors
-    occupancies: [u64; 2],
+    pub occupancies: [u64; 2],
 
     zobrist: u64,
     en_passant_sq: Option<Square>,
@@ -126,7 +126,7 @@ impl Move {
     #[inline(always)]
     pub fn get_flags(self) -> MoveFlag {
         let encoded_flags = (self.0 >> 12 & 0xf) as usize;
-        let move_flag = crate::attacks::tables::FLAGS_LUT[encoded_flags];
+        let move_flag = crate::chess::attacks::tables::FLAGS_LUT[encoded_flags];
 
         debug_assert!(move_flag.move_type != MoveType::Invalid);
         move_flag
