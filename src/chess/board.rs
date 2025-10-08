@@ -161,3 +161,45 @@ pub fn to_square(rank: i8, file: i8) -> Square {
 pub fn valid_axis(axis: i8) -> bool {
     axis >= 0 && axis < BOARD_WIDTH as i8
 }
+
+#[inline(always)]
+pub fn bit(square: Square) -> u64 {
+    1u64 << square
+}
+
+pub trait BitboardOnes: Sized + Copy {
+    fn ones_iter(self) -> BitboardOnesIter;
+}
+
+pub struct BitboardOnesIter {
+    bitboard: u64,
+}
+
+impl Iterator for BitboardOnesIter {
+    type Item = Square;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bitboard == 0 {
+            None
+        } else {
+            let sq = self.bitboard.trailing_zeros() as Square;
+            self.bitboard &= self.bitboard - 1; // clear lowest set bit
+            Some(sq)
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let pop = self.bitboard.count_ones() as usize;
+        (pop, Some(pop))
+    }
+}
+
+impl ExactSizeIterator for BitboardOnesIter {}
+
+impl BitboardOnes for u64 {
+    fn ones_iter(self) -> BitboardOnesIter {
+        BitboardOnesIter { bitboard: self }
+    }
+}

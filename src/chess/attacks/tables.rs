@@ -77,12 +77,14 @@ pub static BPAWN_ATTACKS: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
 });
 pub static BISHOP_RM: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
     std::array::from_fn(|square| {
-        gen_sliding_attacks(square as Square, 0, &BISHOP_DIRECTIONS) & !gen_edge_mask(square)
+        gen_sliding_attacks(square as Square, 0, &BISHOP_DIRECTIONS)
+            & !gen_edge_mask(square as Square)
     })
 });
 pub static ROOK_RM: LazyLock<[u64; BOARD_SIZE]> = LazyLock::new(|| {
     std::array::from_fn(|square| {
-        gen_sliding_attacks(square as Square, 0, &ROOK_DIRECTIONS) & !gen_edge_mask(square)
+        gen_sliding_attacks(square as Square, 0, &ROOK_DIRECTIONS)
+            & !gen_edge_mask(square as Square)
     })
 });
 
