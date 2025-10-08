@@ -3,7 +3,7 @@ pub const BOARD_SIZE: usize = 64;
 
 pub type Square = u8;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum Color {
     White = 0,
@@ -40,6 +40,18 @@ impl Piece {
             _ => Err("Invalid character"),
         }
     }
+
+    pub fn to_char(self) -> char {
+        match self {
+            Piece::Pawn => 'P',
+            Piece::Knight => 'N',
+            Piece::Bishop => 'B',
+            Piece::Rook => 'R',
+            Piece::Queen => 'Q',
+            Piece::King => 'K',
+            Piece::None => ' ',
+        }
+    }
 }
 
 pub const PIECE_TYPES: [Piece; 6] = [
@@ -55,16 +67,16 @@ pub const PIECE_TYPES: [Piece; 6] = [
 pub struct Castling(u8);
 
 impl Castling {
-    pub fn white_king_side(self) -> bool {
+    pub fn white_king_side(&self) -> bool {
         self.0 & 1 != 0
     }
-    pub fn white_queen_side(self) -> bool {
+    pub fn white_queen_side(&self) -> bool {
         self.0 & 2 != 0
     }
-    pub fn black_king_side(self) -> bool {
+    pub fn black_king_side(&self) -> bool {
         self.0 & 4 != 0
     }
-    pub fn black_queen_side(self) -> bool {
+    pub fn black_queen_side(&self) -> bool {
         self.0 & 8 != 0
     }
 }
@@ -83,8 +95,6 @@ pub struct Board {
 
 impl Board {
     pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
-        debug_assert!(self.pieces[square as usize] == (piece_type, color));
-
         let square_bit = bit(square);
 
         if self.pieces[square as usize].0 == Piece::None {
@@ -191,6 +201,12 @@ impl Board {
             }
         }
 
+        if let Some(halfmove_clock_part) = tokens.next() {
+            if let Ok(halfmove_clock) = halfmove_clock_part.parse::<u8>() {
+                board.halfmove_clock = halfmove_clock;
+            }
+        }
+
         Ok(board)
     }
 }
@@ -267,6 +283,28 @@ impl Move {
 
         debug_assert!(move_flag.move_type != MoveType::Invalid);
         move_flag
+    }
+
+    pub fn to_uci(self) -> String {
+        let from_square = self.from_square();
+        let to_square = self.to_square();
+
+        let from_rank = from_square / BOARD_WIDTH as u8;
+        let from_file = from_square % BOARD_WIDTH as u8;
+
+        let to_rank = to_square / BOARD_WIDTH as u8;
+        let to_file = to_square % BOARD_WIDTH as u8;
+
+        let move_flags = self.get_flags();
+
+        format!(
+            "{}{}{}{}{}",
+            (b'a' + from_file) as char,
+            from_rank + 1,
+            (b'a' + to_file) as char,
+            to_rank + 1,
+            move_flags.promotion.to_char()
+        )
     }
 }
 

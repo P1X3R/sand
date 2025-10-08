@@ -2,7 +2,7 @@ mod chess;
 
 use chess::{attacks, board};
 
-fn print_bitboard(bitboard: u64) {
+fn _print_bitboard(bitboard: u64) {
     println!();
     for rank in (0..board::BOARD_WIDTH).rev() {
         print!("{}  ", rank + 1);
@@ -16,10 +16,15 @@ fn print_bitboard(bitboard: u64) {
     println!("\n   a b c d e f g h\n");
 }
 
-fn main() {
-    let occupancy = 1u64 << 9;
-    print_bitboard(occupancy);
-    print_bitboard(
-        attacks::magics::SLIDING_ATTACKS[attacks::movegen::get_rook_index(0, occupancy)],
-    );
+fn main() -> Result<(), &'static str> {
+    let board =
+        board::Board::new("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string())?;
+
+    print!("Pseudo-legal moves: ");
+    for piece_move in attacks::movegen::gen_color_moves(&board) {
+        print!("{}", piece_move.to_uci());
+    }
+    println!();
+
+    Ok(())
 }
