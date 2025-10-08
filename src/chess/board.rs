@@ -27,6 +27,21 @@ pub enum Piece {
     King,
     None,
 }
+
+impl Piece {
+    pub fn from_char(letter: char) -> Result<Piece, &'static str> {
+        match letter.to_ascii_lowercase() {
+            'p' => Ok(Piece::Pawn),
+            'n' => Ok(Piece::Knight),
+            'b' => Ok(Piece::Bishop),
+            'r' => Ok(Piece::Rook),
+            'q' => Ok(Piece::Queen),
+            'k' => Ok(Piece::King),
+            _ => Err("Invalid character"),
+        }
+    }
+}
+
 pub const PIECE_TYPES: [Piece; 6] = [
     Piece::Pawn,
     Piece::Knight,
@@ -64,6 +79,120 @@ pub struct Board {
     halfmove_clock: u8,
     castling_rights: Castling, // 4 bits for KQkq
     pub side_to_move: Color,
+}
+
+impl Board {
+    pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
+        debug_assert!(self.pieces[square as usize] == (piece_type, color));
+
+        let square_bit = bit(square);
+
+        if self.pieces[square as usize].0 == Piece::None {
+            self.pieces[square as usize] = (piece_type, color);
+        } else {
+            self.pieces[square as usize] = (Piece::None, Color::White);
+        }
+        self.bitboards[color as usize][piece_type as usize] ^= square_bit;
+        self.occupancies[color as usize] ^= square_bit;
+
+        // TODO: Zobrist
+    }
+
+    fn parse_positioning(&mut self, part: &str) -> Result<(), &'static str> {
+        let mut rank: u8 = BOARD_WIDTH as u8 - 1;
+        let mut file: u8 = 0;
+
+        for chr in part.chars() {
+            match chr {
+                '/' => {
+                    if rank == 0 {
+                        return Err("Too many ranks");
+                    }
+                    rank -= 1;
+                    file = 0;
+                }
+                c if c.is_ascii_digit() => {
+                    file += c.to_digit(10).ok_or("Invalid digit")? as u8;
+                }
+                c => {
+                    let piece_type = Piece::from_char(c)?;
+                    let color = if c.is_uppercase() {
+                        Color::White
+                    } else {
+                        Color::Black
+                    };
+                    if file >= BOARD_WIDTH as u8 {
+                        return Err("File out of bounds");
+                    }
+                    self.toggle_piece(to_square(rank as i8, file as i8), piece_type, color);
+                    file += 1;
+                }
+            }
+        }
+
+        if rank != 0 || file != BOARD_WIDTH as u8 {
+            return Err("Incomplete board");
+        }
+
+        Ok(())
+    }
+
+    pub fn new(fen: String) -> Result<Self, &'static str> {
+        let mut tokens = fen.trim().split(' ');
+
+        let mut board = Board {
+            pieces: [(Piece::None, Color::White); BOARD_SIZE],
+            bitboards: [[0u64; 6]; 2],
+            occupancies: [0u64; 2],
+
+            zobrist: 0u64,
+            en_passant_square: None,
+            halfmove_clock: 0,
+            castling_rights: Castling(0),
+            side_to_move: Color::White,
+        };
+
+        if let Some(positioning_part) = tokens.next() {
+            board.parse_positioning(positioning_part)?;
+        } else {
+            return Err("No piece placement part found");
+        }
+
+        board.side_to_move = match tokens.next().and_then(|s| s.chars().next()) {
+            Some('w') => Color::White,
+            Some('b') => Color::Black,
+            _ => Color::White,
+        };
+
+        if let Some(castling_part) = tokens.next() {
+            for chr in castling_part.chars() {
+                board.castling_rights.0 |= match chr {
+                    'K' => 1 << 0,
+                    'Q' => 1 << 1,
+                    'k' => 1 << 2,
+                    'q' => 1 << 3,
+                    _ => 0u8,
+                }
+            }
+        }
+
+        if let Some(en_passant_part) = tokens.next() {
+            if en_passant_part.len() >= 2 {
+                let mut en_passant_chars = en_passant_part.chars();
+                let file_char = en_passant_chars.next().unwrap();
+                let rank_char = en_passant_chars.next().unwrap();
+
+                if file_char >= 'a' && file_char <= 'h' && rank_char >= '1' && rank_char <= '8' {
+                    let file = (file_char as u8) - ('a' as u8);
+                    let rank = rank_char.to_digit(10).unwrap() - 1;
+                    let square = to_square(rank as i8, file as i8);
+                    board.en_passant_square = Some(square);
+                }
+            }
+        }
+
+        Ok(board)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
