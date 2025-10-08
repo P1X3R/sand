@@ -6,6 +6,8 @@ use crate::chess::{
     board::*,
 };
 
+pub const MAX_MOVES: usize = 256;
+
 pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
     debug_assert!(square < BOARD_SIZE as u8);
 
@@ -123,20 +125,26 @@ pub fn get_rook_index(square: Square, occupancy: u64) -> usize {
     magic.offset + variant as usize
 }
 
+#[inline(always)]
 pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
     let friendly = board.occupancies[color as usize];
-    let occupancy_all = friendly | board.occupancies[color.toggle() as usize];
+    let enemy = board.occupancies[color.toggle() as usize];
+    let occupancy_all = friendly | enemy;
 
     debug_assert!(board.pieces[square as usize] == (piece, color));
     debug_assert!(friendly & (1u64 << square) != 0);
 
     match piece {
         Piece::Pawn => {
-            gen_pawn_pushes(square, occupancy_all, color)
-                | (match color {
-                    Color::White => tables::WPAWN_ATTACKS[square as usize],
-                    Color::Black => tables::BPAWN_ATTACKS[square as usize],
-                })
+            // Include the en passant square as a potential target, since its capture is diagonal
+            let en_passant_bit = board.en_passant_square.map_or(0, |square| 1u64 << square);
+            let occupancy_with_en_passant = en_passant_bit | enemy;
+            let attacks = match color {
+                Color::White => tables::WPAWN_ATTACKS[square as usize],
+                Color::Black => tables::BPAWN_ATTACKS[square as usize],
+            } & occupancy_with_en_passant;
+
+            gen_pawn_pushes(square, occupancy_all, color) | attacks
         }
         Piece::Knight => tables::KNIGHT_ATTACKS[square as usize] & !friendly,
         Piece::Bishop => {
@@ -144,10 +152,76 @@ pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board
         }
         Piece::Rook => magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)] & !friendly,
         Piece::Queen => {
-            gen_piece_moves(square, Piece::Bishop, color, board)
-                | gen_piece_moves(square, Piece::Rook, color, board)
+            (magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)]
+                | magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)])
+                & !friendly
         }
-        Piece::King => tables::KING_ATTACKS[square as usize],
-        Piece::None => unreachable!(),
+        Piece::King => tables::KING_ATTACKS[square as usize] & !friendly,
+        Piece::None => unreachable!("Tried to generate moves for an empty square"),
     }
+}
+
+pub fn gen_color_moves(board: &Board) -> tinyvec::ArrayVec<[Move; MAX_MOVES]> {
+    let mut move_list = tinyvec::ArrayVec::<[Move; 256]>::new();
+    let color = board.side_to_move;
+
+    for piece in PIECE_TYPES {
+        let mut bitboard: u64 = board.bitboards[color as usize][piece as usize];
+        while bitboard != 0 {
+            let from_square: Square = bitboard.trailing_zeros() as u8;
+            let mut moves_bits: u64 = gen_piece_moves(from_square, piece, color, board);
+
+            while moves_bits != 0 {
+                let to_square: Square = moves_bits.trailing_zeros() as u8;
+                let move_type =
+                    if piece == Piece::Pawn && Some(to_square) == board.en_passant_square {
+                        MoveType::EnPassantCapture
+                    } else if board.pieces[to_square as usize].0 != Piece::None {
+                        MoveType::Capture
+                    } else if piece == Piece::Pawn
+                        && to_square.abs_diff(from_square) == (BOARD_WIDTH * 2) as u8
+                    {
+                        MoveType::DoublePawnPush
+                    } else {
+                        MoveType::Quiet
+                    };
+                let promotion_rank = match color {
+                    Color::White => RANKS[7],
+                    Color::Black => RANKS[0],
+                };
+                let is_promotion =
+                    piece == Piece::Pawn && (1u64 << to_square) & promotion_rank != 0;
+
+                if is_promotion {
+                    const PROMOTION_TYPES: [Piece; 4] =
+                        [Piece::Knight, Piece::Bishop, Piece::Rook, Piece::Queen];
+                    for promotion_piece in PROMOTION_TYPES {
+                        move_list.push(Move::new(
+                            from_square,
+                            to_square,
+                            MoveFlag {
+                                move_type: move_type,
+                                promotion: promotion_piece,
+                            },
+                        ));
+                    }
+                } else {
+                    move_list.push(Move::new(
+                        from_square,
+                        to_square,
+                        MoveFlag {
+                            move_type: move_type,
+                            promotion: Piece::None,
+                        },
+                    ));
+                }
+
+                moves_bits &= moves_bits - 1;
+            }
+
+            bitboard &= bitboard - 1;
+        }
+    }
+
+    move_list
 }

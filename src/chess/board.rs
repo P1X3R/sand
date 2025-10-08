@@ -27,6 +27,14 @@ pub enum Piece {
     King,
     None,
 }
+pub const PIECE_TYPES: [Piece; 6] = [
+    Piece::Pawn,
+    Piece::Knight,
+    Piece::Bishop,
+    Piece::Rook,
+    Piece::Queen,
+    Piece::King,
+];
 
 #[repr(transparent)]
 pub struct Castling(u8);
@@ -48,14 +56,14 @@ impl Castling {
 
 pub struct Board {
     pub pieces: [(Piece, Color); BOARD_SIZE],
-    bitboards: [[u64; 6]; 2], // 6 piece types for 2 colors
+    pub bitboards: [[u64; 6]; 2], // 6 piece types for 2 colors
     pub occupancies: [u64; 2],
 
     zobrist: u64,
-    en_passant_sq: Option<Square>,
+    pub en_passant_square: Option<Square>,
     halfmove_clock: u8,
     castling_rights: Castling, // 4 bits for KQkq
-    side_to_move: Color,
+    pub side_to_move: Color,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,7 +84,7 @@ pub struct MoveFlag {
     pub promotion: Piece,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 #[repr(transparent)]
 pub struct Move(pub u16);
 
