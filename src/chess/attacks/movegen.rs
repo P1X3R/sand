@@ -10,6 +10,7 @@ use crate::chess::{
 
 pub const MAX_MOVES: usize = 256;
 
+#[inline(always)]
 pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
     debug_assert!(square < BOARD_SIZE as u8);
 
@@ -27,6 +28,14 @@ pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
             single | double
         }
     }
+}
+
+#[inline(always)]
+fn gen_pawn_captures(square: Square, capturable: u64, color: Color) -> u64 {
+    (match color {
+        Color::White => tables::WPAWN_ATTACKS[square as usize],
+        Color::Black => tables::BPAWN_ATTACKS[square as usize],
+    }) & capturable
 }
 
 pub fn gen_jumping_attacks(square: Square, offsets: &[Offset]) -> u64 {
@@ -149,13 +158,10 @@ pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board
         Piece::Pawn => {
             // Include the en passant square as a potential target, since its capture is diagonal
             let en_passant_bit = board.en_passant_square.map_or(0u64, bit);
-            let occupancy_with_en_passant = en_passant_bit | enemy;
-            let attacks = match color {
-                Color::White => tables::WPAWN_ATTACKS[square as usize],
-                Color::Black => tables::BPAWN_ATTACKS[square as usize],
-            } & occupancy_with_en_passant;
+            let enemy_with_en_passant = en_passant_bit | enemy;
 
-            gen_pawn_pushes(square, occupancy_all, color) | attacks
+            gen_pawn_pushes(square, occupancy_all, color)
+                | gen_pawn_captures(square, enemy_with_en_passant, color)
         }
         Piece::Knight => tables::KNIGHT_ATTACKS[square as usize],
         Piece::Bishop => magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)],
@@ -243,4 +249,43 @@ pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
     }
 
     move_list
+}
+
+pub fn get_least_valuable_attacker(square: Square, attacker_color: Color, board: &Board) -> Piece {
+    let occupancy_all =
+        board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
+    let attacker_bitboards = board.bitboards[attacker_color as usize];
+
+    if gen_pawn_captures(
+        square,
+        attacker_bitboards[Piece::Pawn as usize],
+        attacker_color.toggle(),
+    ) != 0
+    {
+        return Piece::Pawn;
+    }
+
+    if tables::KNIGHT_ATTACKS[square as usize] & attacker_bitboards[Piece::Knight as usize] != 0 {
+        return Piece::Knight;
+    }
+
+    let bishop_rays = magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)];
+    if bishop_rays & attacker_bitboards[Piece::Bishop as usize] != 0 {
+        return Piece::Bishop;
+    }
+
+    let rook_rays = magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)];
+    if rook_rays & attacker_bitboards[Piece::Rook as usize] != 0 {
+        return Piece::Rook;
+    }
+
+    if (bishop_rays | rook_rays) & attacker_bitboards[Piece::Queen as usize] != 0 {
+        return Piece::Queen;
+    }
+
+    if tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize] != 0 {
+        return Piece::King;
+    }
+
+    Piece::None
 }
