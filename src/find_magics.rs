@@ -1,12 +1,12 @@
 use rand::{Rng, SeedableRng};
 
-use crate::{
-    chess::attacks::{
+use crate::chess::{
+    attacks::{
         movegen::{gen_sliding_attacks, get_occupancy},
         tables::{self, Magic, Offset},
     },
-    chess::board,
-    chess::board::Square,
+    board,
+    board::Square,
 };
 
 mod chess;

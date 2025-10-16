@@ -6,6 +6,7 @@ use crate::chess::{
         tables::{self, Offset},
     },
     board::*,
+    moves::{Move, MoveFlag, MoveType},
 };
 
 pub const MAX_MOVES: usize = 256;
@@ -203,9 +204,7 @@ fn push_with_promotions(
     let is_promotion = piece == Piece::Pawn && bit(to_square) & promotion_rank != 0;
 
     if is_promotion {
-        const PROMOTION_TYPES: [Piece; 4] =
-            [Piece::Knight, Piece::Bishop, Piece::Rook, Piece::Queen];
-        for promotion_piece in PROMOTION_TYPES {
+        for promotion_piece in [Piece::Knight, Piece::Bishop, Piece::Rook, Piece::Queen] {
             move_list.push(Move::new(
                 from_square,
                 to_square,
@@ -248,44 +247,102 @@ pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
         }
     }
 
+    move_list.extend(get_castling_moves(board));
+
     move_list
 }
 
-pub fn get_least_valuable_attacker(square: Square, attacker_color: Color, board: &Board) -> Piece {
-    let occupancy_all =
+#[inline(always)]
+pub fn get_attacker(square: Square, attacker_color: Color, board: &Board) -> u64 {
+    let occupancy =
         board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
     let attacker_bitboards = board.bitboards[attacker_color as usize];
 
-    if gen_pawn_captures(
+    let pawn_attacks = gen_pawn_captures(
+        square,
+        attacker_bitboards[Piece::Pawn as usize],
+        attacker_color.toggle(),
+    );
+    let knight_attacks =
+        tables::KNIGHT_ATTACKS[square as usize] & attacker_bitboards[Piece::Knight as usize];
+    let bishop_rays = magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy)];
+    let bishop_queen_occupancy =
+        attacker_bitboards[Piece::Bishop as usize] | attacker_bitboards[Piece::Queen as usize];
+    let rook_rays = magics::SLIDING_ATTACKS[get_rook_index(square, occupancy)];
+    let rook_queen_occupancy =
+        attacker_bitboards[Piece::Rook as usize] | attacker_bitboards[Piece::Queen as usize];
+    let king_attacks =
+        tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize];
+
+    pawn_attacks
+        | knight_attacks
+        | (bishop_rays & bishop_queen_occupancy)
+        | (rook_rays & rook_queen_occupancy)
+        | king_attacks
+}
+
+#[inline(always)]
+pub fn is_square_attacked(square: Square, attacker_color: Color, board: &Board) -> bool {
+    let occupancy =
+        board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
+    let attacker_bitboards = board.bitboards[attacker_color as usize];
+    let attackers_queens = attacker_bitboards[Piece::Queen as usize];
+
+    gen_pawn_captures(
         square,
         attacker_bitboards[Piece::Pawn as usize],
         attacker_color.toggle(),
     ) != 0
-    {
-        return Piece::Pawn;
-    }
+        || (tables::KNIGHT_ATTACKS[square as usize] & attacker_bitboards[Piece::Knight as usize])
+            != 0
+        || (magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy)]
+            & (attacker_bitboards[Piece::Bishop as usize] | attackers_queens))
+            != 0
+        || (magics::SLIDING_ATTACKS[get_rook_index(square, occupancy)]
+            & (attacker_bitboards[Piece::Rook as usize] | attackers_queens))
+            != 0
+        || (tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize]) != 0
+}
 
-    if tables::KNIGHT_ATTACKS[square as usize] & attacker_bitboards[Piece::Knight as usize] != 0 {
-        return Piece::Knight;
-    }
+fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
+    const E1: Square = 4;
+    const WHITE_KING_SIDE: Square = E1 + 2;
+    const WHITE_QUEEN_SIDE: Square = E1 - 2;
 
-    let bishop_rays = magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)];
-    if bishop_rays & attacker_bitboards[Piece::Bishop as usize] != 0 {
-        return Piece::Bishop;
-    }
+    const E8: Square = 60;
+    const BLACK_KING_SIDE: Square = E8 + 2;
+    const BLACK_QUEEN_SIDE: Square = E8 - 2;
 
-    let rook_rays = magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)];
-    if rook_rays & attacker_bitboards[Piece::Rook as usize] != 0 {
-        return Piece::Rook;
-    }
+    const KING_SIDE_FLAG: MoveFlag = MoveFlag {
+        move_type: MoveType::KingSideCastle,
+        promotion: Piece::None,
+    };
+    const QUEEN_SIDE_FLAG: MoveFlag = MoveFlag {
+        move_type: MoveType::QueenSideCastle,
+        promotion: Piece::None,
+    };
 
-    if (bishop_rays | rook_rays) & attacker_bitboards[Piece::Queen as usize] != 0 {
-        return Piece::Queen;
-    }
+    let mut castles = ArrayVec::<[Move; 2]>::new();
 
-    if tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize] != 0 {
-        return Piece::King;
-    }
+    let rights = &board.castling_rights;
+    match board.side_to_move {
+        Color::White => {
+            if rights.white_king_side() {
+                castles.push(Move::new(E1, WHITE_KING_SIDE, KING_SIDE_FLAG));
+            }
+            if rights.white_queen_side() {
+                castles.push(Move::new(E1, WHITE_QUEEN_SIDE, QUEEN_SIDE_FLAG));
+            }
+        }
+        Color::Black => {
+            if rights.black_king_side() {
+                castles.push(Move::new(E8, BLACK_KING_SIDE, KING_SIDE_FLAG));
+            }
+            if rights.black_queen_side() {
+                castles.push(Move::new(E8, BLACK_QUEEN_SIDE, QUEEN_SIDE_FLAG));
+            }
+        }
+    };
 
-    Piece::None
+    castles
 }

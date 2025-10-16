@@ -17,12 +17,11 @@ fn _print_bitboard(bitboard: u64) {
 }
 
 fn main() -> Result<(), &'static str> {
-    let board =
-        board::Board::new("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string())?;
+    let board = board::Board::new("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")?;
 
     print!("Pseudo-legal moves: ");
-    for piece_move in attacks::movegen::gen_color_moves(&board) {
-        print!("{}", piece_move.to_uci());
+    for mov in attacks::movegen::gen_color_moves(&board) {
+        print!("{}", mov.to_uci());
     }
     println!();
 
