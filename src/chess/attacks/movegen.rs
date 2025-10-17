@@ -100,33 +100,6 @@ pub fn gen_sliding_attacks(square: Square, occupancy: u64, directions: &[Offset]
     attacks
 }
 
-/// Given a 'relevant_mask' that marks the set of squares which can be blocked
-/// (for a rook, bishop or queen on a magic-bitboard line), and an index
-/// 'variant' in the range 0..2^popcnt(relevant_mask), return the
-/// corresponding occupancy bitboard.
-///
-/// Each bit of 'variant' decides whether the respective square (in
-/// lowest-bit-first order) is occupied by a blocker piece.  The result is
-/// the occupancy pattern that will be fed to the magic multiplier when
-/// building the attack table off-line.
-pub fn get_occupancy(mut variant: usize, mut relevant_mask: u64) -> u64 {
-    debug_assert!(variant < (1 << relevant_mask.count_ones()));
-
-    let mut occupancy: u64 = 0;
-
-    while variant != 0 {
-        // include square if current variant bit is set
-        if variant & 1 != 0 {
-            occupancy |= relevant_mask & relevant_mask.wrapping_neg(); // lowest set bit only
-        }
-
-        variant >>= 1; // next decision bit
-        relevant_mask &= relevant_mask - 1; // clear lowest set bit (advance to next square)
-    }
-
-    occupancy
-}
-
 // This code is textbook magic bitboards
 #[inline(always)]
 pub fn get_bishop_index(square: Square, occupancy: u64) -> usize {
@@ -345,4 +318,47 @@ fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     };
 
     castles
+}
+
+/// The move must be already done in the board for this function to work properly
+#[inline(always)]
+pub fn is_legal_move(mov: Move, board: &Board) -> bool {
+    let move_type = mov.get_flags().move_type;
+    let color = board.side_to_move;
+    let king_bitboard = board.bitboards[color as usize][Piece::King as usize];
+
+    // Move must be already done
+    debug_assert!(
+        board.pieces[mov.get_from() as usize].0 == Piece::None
+            && board.pieces[mov.get_to() as usize].0 != Piece::None
+    );
+
+    if move_type == MoveType::KingSideCastle || move_type == MoveType::QueenSideCastle {
+        let (in_between, through, rook_bit) = match (color, move_type) {
+            (Color::White, MoveType::KingSideCastle) => (&[5, 6][..], &[4, 5, 6][..], bit(5)),
+            (Color::White, MoveType::QueenSideCastle) => (&[1, 2, 3][..], &[4, 3, 2][..], bit(3)),
+            (Color::Black, MoveType::KingSideCastle) => (&[61, 62][..], &[60, 61, 62][..], bit(61)),
+            (Color::Black, MoveType::QueenSideCastle) => {
+                (&[57, 58, 59][..], &[60, 59, 58][..], bit(59))
+            }
+            _ => unreachable!(),
+        };
+
+        let occupancy =
+            board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
+        let occupancy_without_updated_pieces = occupancy & !(king_bitboard | rook_bit);
+
+        through
+            .iter()
+            .all(|&square| !is_square_attacked(square, color.toggle(), board))
+            && in_between
+                .iter()
+                .all(|&square| occupancy_without_updated_pieces & bit(square) == 0)
+    } else {
+        !is_square_attacked(
+            king_bitboard.trailing_zeros() as Square,
+            color.toggle(),
+            board,
+        )
+    }
 }

@@ -11,6 +11,33 @@ use crate::chess::{
 
 mod chess;
 
+/// Given a 'relevant_mask' that marks the set of squares which can be blocked
+/// (for a rook, bishop or queen on a magic-bitboard line), and an index
+/// 'variant' in the range 0..2^popcnt(relevant_mask), return the
+/// corresponding occupancy bitboard.
+///
+/// Each bit of 'variant' decides whether the respective square (in
+/// lowest-bit-first order) is occupied by a blocker piece.  The result is
+/// the occupancy pattern that will be fed to the magic multiplier when
+/// building the attack table off-line.
+pub fn get_occupancy(mut variant: usize, mut relevant_mask: u64) -> u64 {
+    debug_assert!(variant < (1 << relevant_mask.count_ones()));
+
+    let mut occupancy: u64 = 0;
+
+    while variant != 0 {
+        // include square if current variant bit is set
+        if variant & 1 != 0 {
+            occupancy |= relevant_mask & relevant_mask.wrapping_neg(); // lowest set bit only
+        }
+
+        variant >>= 1; // next decision bit
+        relevant_mask &= relevant_mask - 1; // clear lowest set bit (advance to next square)
+    }
+
+    occupancy
+}
+
 fn find_magic(
     square: Square,
     relevant_mask: u64,
@@ -68,8 +95,11 @@ pub fn main() -> Result<(), &'static str> {
     let mut sliding_attacks: Vec<u64> = vec![];
     let mut offset = 0;
 
-    print!("use crate::chess::attacks::tables::Magic;\n\n");
+    print!(
+        "#![cfg_attr(rustfmt, rustfmt_skip)]\n#![allow(clippy::all)]\n\nuse crate::chess::attacks::tables::Magic;\n\n"
+    );
 
+    #[allow(clippy::needless_range_loop)]
     for square in 0..board::BOARD_SIZE {
         let (magic, bits, mut att_sq) = find_magic(
             square as Square,
