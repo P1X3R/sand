@@ -277,6 +277,7 @@ pub fn is_square_attacked(square: Square, attacker_color: Color, board: &Board) 
         || (tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize]) != 0
 }
 
+#[inline(always)]
 fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     const E1: Square = 4;
     const WHITE_KING_SIDE: Square = E1 + 2;
@@ -299,22 +300,22 @@ fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     let occupancy =
         board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
 
-    let rights = &board.castling_rights;
+    let rights = board.castling_rights;
     match board.side_to_move {
         Color::White => {
             // Check only if square is empty to be able to efficiently undo the move
-            if rights.white_king_side() && occupancy & bit(WHITE_KING_SIDE) == 0 {
+            if rights & Castling::WK != 0 && occupancy & bit(WHITE_KING_SIDE) == 0 {
                 castles.push(Move::new(E1, WHITE_KING_SIDE, KING_SIDE_FLAG));
             }
-            if rights.white_queen_side() && occupancy & bit(WHITE_QUEEN_SIDE) == 0 {
+            if rights & Castling::WQ != 0 && occupancy & bit(WHITE_QUEEN_SIDE) == 0 {
                 castles.push(Move::new(E1, WHITE_QUEEN_SIDE, QUEEN_SIDE_FLAG));
             }
         }
         Color::Black => {
-            if rights.black_king_side() && occupancy & bit(BLACK_KING_SIDE) == 0 {
+            if rights & Castling::BK != 0 && occupancy & bit(BLACK_KING_SIDE) == 0 {
                 castles.push(Move::new(E8, BLACK_KING_SIDE, KING_SIDE_FLAG));
             }
-            if rights.black_queen_side() && occupancy & bit(BLACK_QUEEN_SIDE) == 0 {
+            if rights & Castling::BQ != 0 && occupancy & bit(BLACK_QUEEN_SIDE) == 0 {
                 castles.push(Move::new(E8, BLACK_QUEEN_SIDE, QUEEN_SIDE_FLAG));
             }
         }

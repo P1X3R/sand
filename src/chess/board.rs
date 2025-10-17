@@ -65,24 +65,15 @@ pub const PIECE_TYPES: [Piece; 6] = [
     Piece::King,
 ];
 
-#[repr(transparent)]
-pub struct Castling(u8);
-
+pub struct Castling;
 impl Castling {
-    pub fn white_king_side(&self) -> bool {
-        self.0 & 1 != 0
-    }
-    pub fn white_queen_side(&self) -> bool {
-        self.0 & 2 != 0
-    }
-    pub fn black_king_side(&self) -> bool {
-        self.0 & 4 != 0
-    }
-    pub fn black_queen_side(&self) -> bool {
-        self.0 & 8 != 0
-    }
+    pub const WK: u8 = 1;
+    pub const WQ: u8 = 2;
+    pub const BK: u8 = 4;
+    pub const BQ: u8 = 8;
 }
 
+#[derive(Clone)]
 pub struct Board {
     pub pieces: [(Piece, Color); BOARD_SIZE],
     pub bitboards: [[u64; 6]; 2], // 6 piece types for 2 colors
@@ -90,12 +81,17 @@ pub struct Board {
 
     pub zobrist: u64,
     pub en_passant_square: Option<Square>,
-    halfmove_clock: u8,
-    pub castling_rights: Castling, // 4 bits for KQkq
+    pub halfmove_clock: u8,
+    pub castling_rights: u8, // 4 bits for KQkq
     pub side_to_move: Color,
 }
 
 impl Board {
+    /// Toggles the presence of a piece on a given square:
+    /// - If the square is empty, the piece is added.
+    /// - If the same piece/color is present, it is removed.
+    /// Updates bitboards, occupancies, and Zobrist accordingly.
+    #[inline(always)]
     pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
         let square_bit = bit(square);
         let (current_piece, current_color) = self.pieces[square as usize];
@@ -127,7 +123,7 @@ impl Board {
             let en_passant_file = (en_passant_square / BOARD_WIDTH as Square) as usize;
             self.zobrist ^= ZOBRIST_EN_PASSANT[en_passant_file];
         }
-        self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights.0 as usize];
+        self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights as usize];
     }
 
     fn parse_positioning(&mut self, part: &str) -> Result<(), &'static str> {
@@ -180,7 +176,7 @@ impl Board {
             zobrist: 0u64,
             en_passant_square: None,
             halfmove_clock: 0,
-            castling_rights: Castling(0),
+            castling_rights: 0,
             side_to_move: Color::White,
         };
 
@@ -198,7 +194,7 @@ impl Board {
 
         if let Some(castling_part) = tokens.next() {
             for chr in castling_part.chars() {
-                board.castling_rights.0 |= match chr {
+                board.castling_rights |= match chr {
                     'K' => 1 << 0,
                     'Q' => 1 << 1,
                     'k' => 1 << 2,
