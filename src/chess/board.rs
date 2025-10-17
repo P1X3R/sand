@@ -1,3 +1,5 @@
+use super::zobrist::*;
+
 pub const BOARD_WIDTH: usize = 8;
 pub const BOARD_SIZE: usize = 64;
 
@@ -86,7 +88,7 @@ pub struct Board {
     pub bitboards: [[u64; 6]; 2], // 6 piece types for 2 colors
     pub occupancies: [u64; 2],
 
-    zobrist: u64,
+    pub zobrist: u64,
     pub en_passant_square: Option<Square>,
     halfmove_clock: u8,
     pub castling_rights: Castling, // 4 bits for KQkq
@@ -96,16 +98,36 @@ pub struct Board {
 impl Board {
     pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
         let square_bit = bit(square);
+        let (current_piece, current_color) = self.pieces[square as usize];
 
-        if self.pieces[square as usize].0 == Piece::None {
-            self.pieces[square as usize] = (piece_type, color);
+        debug_assert!(
+            current_piece == Piece::None || (current_piece == piece_type && current_color == color),
+            "toggle_piece mismatch at square {:?}",
+            square
+        );
+
+        self.pieces[square as usize] = if current_piece == Piece::None {
+            (piece_type, color)
         } else {
-            self.pieces[square as usize] = (Piece::None, Color::White);
-        }
+            (Piece::None, Color::White)
+        };
         self.bitboards[color as usize][piece_type as usize] ^= square_bit;
         self.occupancies[color as usize] ^= square_bit;
 
-        // TODO: Zobrist
+        self.zobrist ^= ZOBRIST_PIECE[color as usize][piece_type as usize][square as usize];
+    }
+
+    /// This function doesn't update zobrist based on piece positioning because `toggle_piece`
+    /// already does it
+    fn update_zobrist(&mut self) {
+        if self.side_to_move == Color::Black {
+            self.zobrist ^= *ZOBRIST_SIDE;
+        }
+        if let Some(en_passant_square) = self.en_passant_square {
+            let en_passant_file = (en_passant_square / BOARD_WIDTH as Square) as usize;
+            self.zobrist ^= ZOBRIST_EN_PASSANT[en_passant_file];
+        }
+        self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights.0 as usize];
     }
 
     fn parse_positioning(&mut self, part: &str) -> Result<(), &'static str> {
@@ -204,6 +226,8 @@ impl Board {
         {
             board.halfmove_clock = halfmove_clock;
         }
+
+        board.update_zobrist();
 
         Ok(board)
     }

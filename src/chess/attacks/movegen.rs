@@ -296,22 +296,25 @@ fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     };
 
     let mut castles = ArrayVec::<[Move; 2]>::new();
+    let occupancy =
+        board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
 
     let rights = &board.castling_rights;
     match board.side_to_move {
         Color::White => {
-            if rights.white_king_side() {
+            // Check only if square is empty to be able to efficiently undo the move
+            if rights.white_king_side() && occupancy & bit(WHITE_KING_SIDE) == 0 {
                 castles.push(Move::new(E1, WHITE_KING_SIDE, KING_SIDE_FLAG));
             }
-            if rights.white_queen_side() {
+            if rights.white_queen_side() && occupancy & bit(WHITE_QUEEN_SIDE) == 0 {
                 castles.push(Move::new(E1, WHITE_QUEEN_SIDE, QUEEN_SIDE_FLAG));
             }
         }
         Color::Black => {
-            if rights.black_king_side() {
+            if rights.black_king_side() && occupancy & bit(BLACK_KING_SIDE) == 0 {
                 castles.push(Move::new(E8, BLACK_KING_SIDE, KING_SIDE_FLAG));
             }
-            if rights.black_queen_side() {
+            if rights.black_queen_side() && occupancy & bit(BLACK_QUEEN_SIDE) == 0 {
                 castles.push(Move::new(E8, BLACK_QUEEN_SIDE, QUEEN_SIDE_FLAG));
             }
         }
