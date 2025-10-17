@@ -148,7 +148,7 @@ impl Board {
     }
 
     pub fn new(fen: &str) -> Result<Self, &'static str> {
-        let mut tokens = fen.trim().split_whitespace();
+        let mut tokens = fen.split_whitespace();
 
         let mut board = Board {
             pieces: [(Piece::None, Color::White); BOARD_SIZE],
@@ -189,22 +189,20 @@ impl Board {
         if let Some(en_passant_part) = tokens.next() {
             let mut en_passant_chars = en_passant_part.chars();
 
-            if let (Some(file_char), Some(rank_char)) =
+            if let (Some(file_char @ 'a'..='h'), Some(rank_char @ '1'..='8')) =
                 (en_passant_chars.next(), en_passant_chars.next())
             {
-                if file_char >= 'a' && file_char <= 'h' && rank_char >= '1' && rank_char <= '8' {
-                    let file = (file_char as u8) - ('a' as u8);
-                    let rank = rank_char.to_digit(10).unwrap() - 1;
-                    let square = to_square(rank as i8, file as i8);
-                    board.en_passant_square = Some(square);
-                }
+                let file = (file_char as u8) - b'a';
+                let rank = rank_char.to_digit(10).unwrap() - 1;
+                let square = to_square(rank as i8, file as i8);
+                board.en_passant_square = Some(square);
             }
         }
 
-        if let Some(halfmove_clock_part) = tokens.next() {
-            if let Ok(halfmove_clock) = halfmove_clock_part.parse::<u8>() {
-                board.halfmove_clock = halfmove_clock;
-            }
+        if let Some(halfmove_clock_part) = tokens.next()
+            && let Ok(halfmove_clock) = halfmove_clock_part.parse::<u8>()
+        {
+            board.halfmove_clock = halfmove_clock;
         }
 
         Ok(board)

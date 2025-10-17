@@ -182,7 +182,7 @@ fn push_with_promotions(
                 from_square,
                 to_square,
                 MoveFlag {
-                    move_type: move_type,
+                    move_type,
                     promotion: promotion_piece,
                 },
             ));
@@ -192,7 +192,7 @@ fn push_with_promotions(
             from_square,
             to_square,
             MoveFlag {
-                move_type: move_type,
+                move_type,
                 promotion: Piece::None,
             },
         ));

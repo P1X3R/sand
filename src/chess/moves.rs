@@ -56,12 +56,12 @@ impl Move {
     }
 
     #[inline(always)]
-    pub fn from_square(self) -> Square {
+    pub fn get_from(self) -> Square {
         (self.0 & 0x3f) as Square
     }
 
     #[inline(always)]
-    pub fn to_square(self) -> Square {
+    pub fn get_to(self) -> Square {
         (self.0 >> 6 & 0x3f) as Square
     }
 
@@ -75,8 +75,8 @@ impl Move {
     }
 
     pub fn to_uci(self) -> String {
-        let from_square = self.from_square();
-        let to_square = self.to_square();
+        let from_square = self.get_from();
+        let to_square = self.get_to();
 
         let from_rank = from_square / BOARD_WIDTH as u8;
         let from_file = from_square % BOARD_WIDTH as u8;

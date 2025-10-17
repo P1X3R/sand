@@ -2,7 +2,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::chess::{
     attacks::{
-        movegen::{gen_sliding_attacks, get_occupancy},
+        movegen::gen_sliding_attacks,
         tables::{self, Magic, Offset},
     },
     board,
@@ -108,8 +108,8 @@ pub fn main() -> Result<(), &'static str> {
         )?;
 
         bishop_magics[square] = Magic {
-            offset: offset,
-            magic: magic,
+            offset,
+            magic,
             shift: board::BOARD_SIZE - bits,
         };
         sliding_attacks.append(&mut att_sq);
@@ -121,6 +121,7 @@ pub fn main() -> Result<(), &'static str> {
         bishop_magics
     );
 
+    #[allow(clippy::needless_range_loop)]
     for square in 0..board::BOARD_SIZE {
         let (magic, bits, mut att_sq) = find_magic(
             square as Square,
@@ -129,8 +130,8 @@ pub fn main() -> Result<(), &'static str> {
         )?;
 
         rook_magics[square] = Magic {
-            offset: offset,
-            magic: magic,
+            offset,
+            magic,
             shift: board::BOARD_SIZE - bits,
         };
         sliding_attacks.append(&mut att_sq);
