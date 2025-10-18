@@ -4,6 +4,15 @@ use crate::chess::{
     zobrist::{ZOBRIST_CASTLING, ZOBRIST_EN_PASSANT, ZOBRIST_SIDE},
 };
 
+pub struct Undo {
+    mov: Move,
+    captured: Piece,
+    en_passant_square: Option<Square>,
+    halfmove_clock: u8,
+    castling_rights: u8, // 4 bits for KQkq
+    zobrist: u64,
+}
+
 impl Board {
     fn update_rights_on_rook_change(&mut self, square: Square, color: Color) {
         self.castling_rights &= !(match (square, color) {
@@ -15,7 +24,7 @@ impl Board {
         });
     }
 
-    pub fn make_move(&mut self, mov: Move) {
+    pub fn make_move(&mut self, mov: Move) -> Undo {
         let from: Square = mov.get_from();
         let to: Square = mov.get_to();
         let flags: MoveFlag = mov.get_flags();
@@ -30,6 +39,7 @@ impl Board {
         };
         let color: Color = self.side_to_move;
         let enemy: Color = color.toggle();
+        let initial_zobrist = self.zobrist;
 
         // Clear piece from original square
         self.toggle_piece(from, piece_type, color);
@@ -73,6 +83,7 @@ impl Board {
             None
         };
 
+        let initial_clock = self.halfmove_clock;
         if piece_type == Piece::Pawn || move_type == MoveType::Capture {
             self.halfmove_clock = 0;
         } else {
@@ -107,5 +118,77 @@ impl Board {
             self.zobrist ^= ZOBRIST_CASTLING[initial_rights as usize];
             self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights as usize];
         }
+
+        Undo {
+            mov: mov,
+            captured: captured_piece,
+            en_passant_square: initial_en_passant,
+            halfmove_clock: initial_clock,
+            castling_rights: initial_rights,
+            zobrist: initial_zobrist,
+        }
+    }
+
+    #[inline(always)]
+    pub fn undo_move(&mut self, undo: &Undo) {
+        self.en_passant_square = undo.en_passant_square;
+        self.halfmove_clock = undo.halfmove_clock;
+        self.castling_rights = undo.castling_rights;
+        self.side_to_move = self.side_to_move.toggle();
+
+        let mov: Move = undo.mov;
+        let from: Square = mov.get_from();
+        let to: Square = mov.get_to();
+        let flags: MoveFlag = mov.get_flags();
+        let move_type: MoveType = flags.move_type;
+        let (piece_type, _): (Piece, Color) = self.pieces[to as usize];
+        let final_type: Piece = if flags.promotion != Piece::None {
+            flags.promotion
+        } else {
+            piece_type
+        };
+        let initial_type: Piece = if piece_type == Piece::Pawn && flags.promotion == Piece::None {
+            Piece::Pawn
+        } else {
+            piece_type
+        };
+        let color = self.side_to_move;
+
+        // Clear the moved piece
+        self.toggle_piece(to, final_type, color);
+
+        // Handle special move types
+        match move_type {
+            MoveType::Capture => self.toggle_piece(to, undo.captured, color.toggle()),
+            MoveType::EnPassantCapture => {
+                let captured_pawn_square = match color {
+                    Color::White => to - BOARD_WIDTH as Square,
+                    Color::Black => to + BOARD_WIDTH as Square,
+                };
+                self.toggle_piece(captured_pawn_square, Piece::Pawn, color.toggle());
+            }
+            MoveType::KingSideCastle => {
+                let (rook_from, rook_to) = match color {
+                    Color::White => (7, 5),
+                    Color::Black => (63, 61),
+                };
+                self.toggle_piece(rook_from, Piece::Rook, color);
+                self.toggle_piece(rook_to, Piece::Rook, color);
+            }
+            MoveType::QueenSideCastle => {
+                let (rook_from, rook_to) = match color {
+                    Color::White => (0, 3),
+                    Color::Black => (56, 59),
+                };
+                self.toggle_piece(rook_from, Piece::Rook, color);
+                self.toggle_piece(rook_to, Piece::Rook, color);
+            }
+            _ => {}
+        }
+
+        // Set the piece to its original square
+        self.toggle_piece(from, initial_type, color);
+
+        self.zobrist = undo.zobrist;
     }
 }

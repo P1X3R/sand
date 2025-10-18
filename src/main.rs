@@ -1,6 +1,6 @@
 mod chess;
 
-use crate::chess::attacks::movegen::is_legal_move;
+use crate::chess::{attacks::movegen::is_legal_move, make_move::Undo};
 use chess::{attacks, board};
 use std::time::Instant;
 
@@ -19,8 +19,14 @@ fn _print_bitboard(bitboard: u64) {
 }
 
 fn main() -> Result<(), &'static str> {
-    let board =
+    let mut board =
         board::Board::new("r1bqkb1r/pppp1ppp/2n2n2/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")?;
+    let original = board.clone();
+    println!("Undo struct size: {} bytes", std::mem::size_of::<Undo>());
+    println!(
+        "Board struct size: {} bytes",
+        std::mem::size_of::<board::Board>()
+    );
     println!("Zobrist: {}", board.zobrist);
 
     let program_start = Instant::now();
@@ -28,13 +34,28 @@ fn main() -> Result<(), &'static str> {
     println!("Time for move generation: {:?}", program_start.elapsed());
 
     for mov in move_list {
-        let mut temp = board.clone();
-        temp.make_move(mov);
+        let move_making_start = Instant::now();
+        let undo = board.make_move(mov);
+        let move_making_time = move_making_start.elapsed();
 
-        let start = Instant::now();
-        if is_legal_move(mov, &temp) {
-            let time_spent = start.elapsed();
-            println!("{}Time for legality check: {:?}", mov.to_uci(), time_spent);
+        let legality_check_start = Instant::now();
+        let is_legal = is_legal_move(mov, &board);
+        let legality_check_time = legality_check_start.elapsed();
+
+        let undo_start = Instant::now();
+        board.undo_move(&undo);
+        let undo_time = undo_start.elapsed();
+
+        assert_eq!(board, original);
+
+        if is_legal {
+            println!(
+                "{:}Time for move making: {:?}; Time for legality check: {:?}; Time for undo: {:?}",
+                mov.to_uci(),
+                move_making_time,
+                legality_check_time,
+                undo_time
+            );
         }
     }
 

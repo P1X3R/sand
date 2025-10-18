@@ -18,7 +18,7 @@ impl Color {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 #[repr(u8)]
 pub enum Piece {
     Pawn,
@@ -73,7 +73,7 @@ impl Castling {
     pub const BQ: u8 = 8;
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Board {
     pub pieces: [(Piece, Color); BOARD_SIZE],
     pub bitboards: [[u64; 6]; 2], // 6 piece types for 2 colors
