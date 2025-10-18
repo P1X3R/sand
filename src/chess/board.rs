@@ -4,6 +4,20 @@ pub const BOARD_WIDTH: usize = 8;
 pub const BOARD_SIZE: usize = 64;
 
 pub type Square = u8;
+pub fn square_from_uci(uci: &str) -> Result<Square, &'static str> {
+    let mut chars = uci.chars();
+
+    if let (Some(file_char @ 'a'..='h'), Some(rank_char @ '1'..='8')) = (chars.next(), chars.next())
+    {
+        let file = (file_char as u8) - b'a';
+        let rank = rank_char.to_digit(10).unwrap() - 1;
+        let square = to_square(rank as i8, file as i8);
+
+        return Ok(square);
+    }
+
+    Err("Invalid character for square")
+}
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 #[repr(u8)]
@@ -45,12 +59,12 @@ impl Piece {
 
     pub fn to_char(self) -> char {
         match self {
-            Piece::Pawn => 'P',
-            Piece::Knight => 'N',
-            Piece::Bishop => 'B',
-            Piece::Rook => 'R',
-            Piece::Queen => 'Q',
-            Piece::King => 'K',
+            Piece::Pawn => 'p',
+            Piece::Knight => 'n',
+            Piece::Bishop => 'b',
+            Piece::Rook => 'r',
+            Piece::Queen => 'q',
+            Piece::King => 'k',
             Piece::None => ' ',
         }
     }
@@ -90,6 +104,7 @@ impl Board {
     /// Toggles the presence of a piece on a given square:
     /// - If the square is empty, the piece is added.
     /// - If the same piece/color is present, it is removed.
+    ///
     /// Updates bitboards, occupancies, and Zobrist accordingly.
     #[inline(always)]
     pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
@@ -98,8 +113,10 @@ impl Board {
 
         debug_assert!(
             current_piece == Piece::None || (current_piece == piece_type && current_color == color),
-            "toggle_piece mismatch at square {:?}",
-            square
+            "toggle_piece mismatch at square {:?}, piece: {:?}, current piece: {:?}",
+            square,
+            (piece_type, color),
+            (current_piece, current_color),
         );
 
         self.pieces[square as usize] = if current_piece == Piece::None {
@@ -205,16 +222,7 @@ impl Board {
         }
 
         if let Some(en_passant_part) = tokens.next() {
-            let mut en_passant_chars = en_passant_part.chars();
-
-            if let (Some(file_char @ 'a'..='h'), Some(rank_char @ '1'..='8')) =
-                (en_passant_chars.next(), en_passant_chars.next())
-            {
-                let file = (file_char as u8) - b'a';
-                let rank = rank_char.to_digit(10).unwrap() - 1;
-                let square = to_square(rank as i8, file as i8);
-                board.en_passant_square = Some(square);
-            }
+            board.en_passant_square = square_from_uci(en_passant_part).ok();
         }
 
         if let Some(halfmove_clock_part) = tokens.next()

@@ -78,7 +78,10 @@ impl Board {
 
         let initial_en_passant = self.en_passant_square;
         self.en_passant_square = if move_type == MoveType::DoublePawnPush {
-            Some(to)
+            Some(match color {
+                Color::White => to - BOARD_WIDTH as Square,
+                Color::Black => to + BOARD_WIDTH as Square,
+            })
         } else {
             None
         };
@@ -147,7 +150,7 @@ impl Board {
         } else {
             piece_type
         };
-        let initial_type: Piece = if piece_type == Piece::Pawn && flags.promotion == Piece::None {
+        let initial_type: Piece = if flags.promotion != Piece::None {
             Piece::Pawn
         } else {
             piece_type

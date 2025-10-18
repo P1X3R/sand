@@ -86,13 +86,23 @@ impl Move {
 
         let move_flags = self.get_flags();
 
-        format!(
-            "{}{}{}{}{}",
-            (b'a' + from_file) as char,
-            from_rank + 1,
-            (b'a' + to_file) as char,
-            to_rank + 1,
-            move_flags.promotion.to_char()
-        )
+        if move_flags.promotion != Piece::None {
+            format!(
+                "{}{}{}{}{}",
+                (b'a' + from_file) as char,
+                from_rank + 1,
+                (b'a' + to_file) as char,
+                to_rank + 1,
+                move_flags.promotion.to_char()
+            )
+        } else {
+            format!(
+                "{}{}{}{}",
+                (b'a' + from_file) as char,
+                from_rank + 1,
+                (b'a' + to_file) as char,
+                to_rank + 1
+            )
+        }
     }
 }

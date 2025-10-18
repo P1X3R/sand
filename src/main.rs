@@ -1,63 +1,153 @@
 mod chess;
 
-use crate::chess::{attacks::movegen::is_legal_move, make_move::Undo};
 use chess::{attacks, board};
-use std::time::Instant;
+use std::io::{self, BufRead};
 
-fn _print_bitboard(bitboard: u64) {
-    println!();
-    for rank in (0..board::BOARD_WIDTH).rev() {
-        print!("{}  ", rank + 1);
-        for file in 0..board::BOARD_WIDTH {
-            let sq = rank * board::BOARD_WIDTH + file;
-            let bit = 1u64 << sq;
-            print!("{} ", if bitboard & bit != 0 { '●' } else { '·' });
-        }
-        println!();
+use crate::chess::{
+    board::{BOARD_WIDTH, Board, Piece, Square, square_from_uci},
+    moves::{Move, MoveFlag, MoveType},
+};
+
+/* ---------- perft helpers (unchanged) ---------- */
+fn divide(board: &mut board::Board, depth: u32) -> u64 {
+    if depth == 0 {
+        return 1;
     }
-    println!("\n   a b c d e f g h\n");
+    let mut nodes = 0;
+    for mov in attacks::movegen::gen_color_moves(board) {
+        let undo = board.make_move(mov);
+        if attacks::movegen::is_legal_move(mov, board) {
+            let subtree_nodes = perft(board, depth - 1);
+            nodes += subtree_nodes;
+            println!("{}: {}", mov.to_uci(), subtree_nodes);
+        }
+        board.undo_move(&undo);
+    }
+    nodes
+}
+
+fn perft(board: &mut board::Board, depth: u32) -> u64 {
+    if depth == 0 {
+        return 1;
+    }
+    let mut nodes = 0;
+    for mov in attacks::movegen::gen_color_moves(board) {
+        let undo = board.make_move(mov);
+        if attacks::movegen::is_legal_move(mov, board) {
+            nodes += perft(board, depth - 1);
+        }
+        board.undo_move(&undo);
+    }
+    nodes
+}
+
+/* ---------- UCI loop ---------- */
+fn get_move_type(piece: Piece, to: Square, from: Square, board: &Board) -> MoveType {
+    let lands_in_piece = board.pieces[to as usize].0 != Piece::None;
+
+    if piece == Piece::Pawn {
+        if Some(to) == board.en_passant_square && !lands_in_piece {
+            return MoveType::EnPassantCapture;
+        }
+        if to.abs_diff(from) == (BOARD_WIDTH * 2) as u8 {
+            return MoveType::DoublePawnPush;
+        }
+    } else if piece == Piece::King {
+        let diff = to as i8 - from as i8;
+
+        if diff == 2 {
+            return MoveType::KingSideCastle;
+        } else if diff == -2 {
+            return MoveType::QueenSideCastle;
+        }
+    }
+
+    if lands_in_piece {
+        return MoveType::Capture;
+    }
+
+    MoveType::Quiet
 }
 
 fn main() -> Result<(), &'static str> {
-    let mut board =
-        board::Board::new("r1bqkb1r/pppp1ppp/2n2n2/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")?;
-    let original = board.clone();
-    println!("Undo struct size: {} bytes", std::mem::size_of::<Undo>());
-    println!(
-        "Board struct size: {} bytes",
-        std::mem::size_of::<board::Board>()
-    );
-    println!("Zobrist: {}", board.zobrist);
+    let stdin = io::stdin();
+    let mut board = board::Board::new("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")?; // initial position
 
-    let program_start = Instant::now();
-    let move_list = attacks::movegen::gen_color_moves(&board);
-    println!("Time for move generation: {:?}", program_start.elapsed());
+    for line in stdin.lock().lines().map_while(Result::ok) {
+        let cmd: Vec<&str> = line.split_whitespace().collect();
+        match cmd.first().copied() {
+            Some("uci") => {
+                println!("id name Sand");
+                println!("id author P1x3r");
+                println!("uciok");
+            }
+            Some("isready") => println!("readyok"),
+            Some("quit") => std::process::exit(0),
+            Some("position") => {
+                // parse: position [fen <fen> | startpos ]  moves  m1 m2 ...
+                let mut fen_given = false;
+                let mut moves_start = None;
+                for (i, &token) in cmd.iter().enumerate() {
+                    if token == "fen" {
+                        fen_given = true;
+                        let fen = cmd[i + 1..i + 6].join(" ");
+                        board = board::Board::new(&fen)?;
+                        if i + 7 < cmd.len() && cmd[i + 7] == "moves" {
+                            moves_start = Some(i + 8);
+                        }
+                        break;
+                    } else if token == "startpos" {
+                        board = board::Board::new(
+                            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        )?;
+                    } else if token == "moves" {
+                        moves_start = Some(i + 1);
+                        break;
+                    }
+                }
+                if let Some(start) = moves_start {
+                    for mov_str in &cmd[start..] {
+                        if mov_str.len() < 4 {
+                            continue;
+                        }
 
-    for mov in move_list {
-        let move_making_start = Instant::now();
-        let undo = board.make_move(mov);
-        let move_making_time = move_making_start.elapsed();
+                        let from: Square = square_from_uci(&mov_str[0..2])?;
+                        let to: Square = square_from_uci(&mov_str[2..4])?;
+                        let promotion: Piece = if mov_str.len() > 4 {
+                            match mov_str.chars().nth(4) {
+                                Some('k') => Piece::Knight,
+                                Some('b') => Piece::Bishop,
+                                Some('r') => Piece::Rook,
+                                Some('q') => Piece::Queen,
+                                _ => Piece::None,
+                            }
+                        } else {
+                            Piece::None
+                        };
+                        let (piece, _) = board.pieces[from as usize];
 
-        let legality_check_start = Instant::now();
-        let is_legal = is_legal_move(mov, &board);
-        let legality_check_time = legality_check_start.elapsed();
-
-        let undo_start = Instant::now();
-        board.undo_move(&undo);
-        let undo_time = undo_start.elapsed();
-
-        assert_eq!(board, original);
-
-        if is_legal {
-            println!(
-                "{:}Time for move making: {:?}; Time for legality check: {:?}; Time for undo: {:?}",
-                mov.to_uci(),
-                move_making_time,
-                legality_check_time,
-                undo_time
-            );
+                        let _ = board.make_move(Move::new(
+                            from,
+                            to,
+                            MoveFlag {
+                                move_type: get_move_type(piece, to, from, &board),
+                                promotion: promotion,
+                            },
+                        ));
+                    }
+                }
+            }
+            Some("go") => {
+                if cmd.len() >= 3
+                    && cmd[1] == "perft"
+                    && let Ok(depth) = cmd[2].parse::<u32>()
+                {
+                    let nodes = divide(&mut board, depth);
+                    println!("\nNodes searched: {}", nodes);
+                }
+            }
+            _ => {} // ignore unknown commands
         }
     }
-
     Ok(())
 }

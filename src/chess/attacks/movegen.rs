@@ -150,21 +150,29 @@ pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board
 }
 
 #[inline(always)]
-fn get_move_type(piece: Piece, to_square: Square, from_square: Square, board: &Board) -> MoveType {
-    if piece == Piece::Pawn && Some(to_square) == board.en_passant_square {
-        return MoveType::EnPassantCapture;
-    } else if board.pieces[to_square as usize].0 != Piece::None {
-        return MoveType::Capture;
-    } else if piece == Piece::Pawn && to_square.abs_diff(from_square) == (BOARD_WIDTH * 2) as u8 {
-        return MoveType::DoublePawnPush;
+fn get_move_type(piece: Piece, to: Square, from: Square, board: &Board) -> MoveType {
+    let lands_in_piece = board.pieces[to as usize].0 != Piece::None;
+
+    if piece == Piece::Pawn {
+        if Some(to) == board.en_passant_square && !lands_in_piece {
+            return MoveType::EnPassantCapture;
+        }
+        if to.abs_diff(from) == (BOARD_WIDTH * 2) as u8 {
+            return MoveType::DoublePawnPush;
+        }
     }
+
+    if lands_in_piece {
+        return MoveType::Capture;
+    }
+
     MoveType::Quiet
 }
 
 #[inline(always)]
 fn push_with_promotions(
-    from_square: Square,
-    to_square: Square,
+    from: Square,
+    to: Square,
     move_type: MoveType,
     piece: Piece,
     color: Color,
@@ -174,13 +182,13 @@ fn push_with_promotions(
         Color::White => RANKS[7],
         Color::Black => RANKS[0],
     };
-    let is_promotion = piece == Piece::Pawn && bit(to_square) & promotion_rank != 0;
+    let is_promotion = piece == Piece::Pawn && bit(to) & promotion_rank != 0;
 
     if is_promotion {
         for promotion_piece in [Piece::Knight, Piece::Bishop, Piece::Rook, Piece::Queen] {
             move_list.push(Move::new(
-                from_square,
-                to_square,
+                from,
+                to,
                 MoveFlag {
                     move_type,
                     promotion: promotion_piece,
@@ -189,8 +197,8 @@ fn push_with_promotions(
         }
     } else {
         move_list.push(Move::new(
-            from_square,
-            to_square,
+            from,
+            to,
             MoveFlag {
                 move_type,
                 promotion: Piece::None,
@@ -205,13 +213,13 @@ pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
 
     for piece_type in PIECE_TYPES {
         let bitboard = board.bitboards[color as usize][piece_type as usize];
-        for from_square in bitboard.ones_iter() {
-            let moves_bitboard = gen_piece_moves(from_square, piece_type, color, board);
-            for to_square in moves_bitboard.ones_iter() {
+        for from in bitboard.ones_iter() {
+            let moves_bitboard = gen_piece_moves(from, piece_type, color, board);
+            for to in moves_bitboard.ones_iter() {
                 push_with_promotions(
-                    from_square,
-                    to_square,
-                    get_move_type(piece_type, to_square, from_square, board),
+                    from,
+                    to,
+                    get_move_type(piece_type, to, from, board),
                     piece_type,
                     color,
                     &mut move_list,
@@ -304,18 +312,18 @@ fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     match board.side_to_move {
         Color::White => {
             // Check only if square is empty to be able to efficiently undo the move
-            if rights & Castling::WK != 0 && occupancy & bit(WHITE_KING_SIDE) == 0 {
+            if rights & Castling::WK != 0 && occupancy & (bit(WHITE_KING_SIDE) | bit(5)) == 0 {
                 castles.push(Move::new(E1, WHITE_KING_SIDE, KING_SIDE_FLAG));
             }
-            if rights & Castling::WQ != 0 && occupancy & bit(WHITE_QUEEN_SIDE) == 0 {
+            if rights & Castling::WQ != 0 && occupancy & (bit(WHITE_QUEEN_SIDE) | bit(3)) == 0 {
                 castles.push(Move::new(E1, WHITE_QUEEN_SIDE, QUEEN_SIDE_FLAG));
             }
         }
         Color::Black => {
-            if rights & Castling::BK != 0 && occupancy & bit(BLACK_KING_SIDE) == 0 {
+            if rights & Castling::BK != 0 && occupancy & (bit(BLACK_KING_SIDE) | bit(61)) == 0 {
                 castles.push(Move::new(E8, BLACK_KING_SIDE, KING_SIDE_FLAG));
             }
-            if rights & Castling::BQ != 0 && occupancy & bit(BLACK_QUEEN_SIDE) == 0 {
+            if rights & Castling::BQ != 0 && occupancy & (bit(BLACK_QUEEN_SIDE) | bit(59)) == 0 {
                 castles.push(Move::new(E8, BLACK_QUEEN_SIDE, QUEEN_SIDE_FLAG));
             }
         }
@@ -328,7 +336,11 @@ fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
 #[inline(always)]
 pub fn is_legal_move(mov: Move, board: &Board) -> bool {
     let move_type = mov.get_flags().move_type;
-    let color = board.side_to_move;
+
+    // Because move was already done, must check for color
+    // who made the move
+    let color = board.side_to_move.toggle();
+
     let king_bitboard = board.bitboards[color as usize][Piece::King as usize];
 
     // Move must be already done
@@ -339,11 +351,15 @@ pub fn is_legal_move(mov: Move, board: &Board) -> bool {
 
     if move_type == MoveType::KingSideCastle || move_type == MoveType::QueenSideCastle {
         let (in_between, through, rook_bit) = match (color, move_type) {
-            (Color::White, MoveType::KingSideCastle) => (&[5, 6][..], &[4, 5, 6][..], bit(5)),
-            (Color::White, MoveType::QueenSideCastle) => (&[1, 2, 3][..], &[4, 3, 2][..], bit(3)),
-            (Color::Black, MoveType::KingSideCastle) => (&[61, 62][..], &[60, 61, 62][..], bit(61)),
+            (Color::White, MoveType::KingSideCastle) => (bit(5) | bit(6), &[4, 5, 6][..], bit(5)),
+            (Color::White, MoveType::QueenSideCastle) => {
+                (bit(1) | bit(2) | bit(3), &[4, 3, 2][..], bit(3))
+            }
+            (Color::Black, MoveType::KingSideCastle) => {
+                (bit(61) | bit(62), &[60, 61, 62][..], bit(61))
+            }
             (Color::Black, MoveType::QueenSideCastle) => {
-                (&[57, 58, 59][..], &[60, 59, 58][..], bit(59))
+                (bit(57) | bit(58) | bit(59), &[60, 59, 58][..], bit(59))
             }
             _ => unreachable!(),
         };
@@ -352,12 +368,10 @@ pub fn is_legal_move(mov: Move, board: &Board) -> bool {
             board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
         let occupancy_without_updated_pieces = occupancy & !(king_bitboard | rook_bit);
 
-        through
-            .iter()
-            .all(|&square| !is_square_attacked(square, color.toggle(), board))
-            && in_between
+        in_between & occupancy_without_updated_pieces == 0
+            && through
                 .iter()
-                .all(|&square| occupancy_without_updated_pieces & bit(square) == 0)
+                .all(|&square| !is_square_attacked(square, color.toggle(), board))
     } else {
         !is_square_attacked(
             king_bitboard.trailing_zeros() as Square,
