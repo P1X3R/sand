@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use rand::{Rng, SeedableRng};
 
 use crate::chess::{
