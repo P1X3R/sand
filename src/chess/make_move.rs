@@ -14,23 +14,64 @@ pub struct Undo {
 }
 
 impl Board {
+    #[inline(always)]
     fn update_rights_on_rook_change(&mut self, square: Square, color: Color) {
         self.castling_rights &= !(match (square, color) {
-            (0, Color::White) => Castling::WQ,
-            (7, Color::White) => Castling::WK,
-            (56, Color::Black) => Castling::BQ,
-            (63, Color::Black) => Castling::BK,
+            (0, Color::White) => Castling::WQ,  // a1
+            (7, Color::White) => Castling::WK,  // h1
+            (56, Color::Black) => Castling::BQ, // a8
+            (63, Color::Black) => Castling::BK, // h8
             _ => 0,
         });
     }
 
+    /// Returns the square of the pawn captured by an en passant move
+    /// `color` is the moving/attacker side's color
+    #[inline(always)]
+    fn get_en_passant_target(to: Square, color: Color) -> Square {
+        match color {
+            Color::White => to - BOARD_WIDTH as Square,
+            Color::Black => to + BOARD_WIDTH as Square,
+        }
+    }
+
+    /// This function doesn't update zobrist based on piece positioning because `toggle_piece`
+    /// already does it
+    #[inline(always)]
+    fn update_zobrist(&mut self, old_en_passant: Option<Square>, old_rights: u8) {
+        self.zobrist ^= *ZOBRIST_SIDE; // Side to move
+
+        // En passant
+        if old_en_passant != self.en_passant_square {
+            self.zobrist ^= old_en_passant.map_or(0u64, |en_passant: Square| {
+                ZOBRIST_EN_PASSANT[(en_passant % BOARD_WIDTH as Square) as usize]
+            });
+            self.zobrist ^= self.en_passant_square.map_or(0u64, |en_passant: Square| {
+                ZOBRIST_EN_PASSANT[(en_passant % BOARD_WIDTH as Square) as usize]
+            });
+        }
+
+        // Castling rights
+        if old_rights != self.castling_rights {
+            self.zobrist ^= ZOBRIST_CASTLING[old_rights as usize];
+            self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights as usize];
+        }
+    }
+
+    /// Makes a move on the board, updating all internal state.
+    /// Returns an `Undo` object that can restore the exact previous state.
+    ///
+    /// # Preconditions
+    /// - `mov` must be a legal move in the current position
+    #[inline(always)]
     pub fn make_move(&mut self, mov: Move) -> Undo {
         let from: Square = mov.get_from();
         let to: Square = mov.get_to();
         let flags: MoveFlag = mov.get_flags();
         let move_type: MoveType = flags.move_type;
-        // `captured_color` is white if is no capture
+        // `captured_color` is white if square is empty (captured_piece = Piece::None)
         let (captured_piece, captured_color): (Piece, Color) = self.pieces[to as usize];
+        // I ignore the color since is the same to self.side_to_move
         let (piece_type, _): (Piece, Color) = self.pieces[from as usize];
         let final_type: Piece = if flags.promotion != Piece::None {
             flags.promotion
@@ -39,7 +80,7 @@ impl Board {
         };
         let color: Color = self.side_to_move;
         let enemy: Color = color.toggle();
-        let initial_zobrist = self.zobrist;
+        let old_zobrist = self.zobrist;
 
         // Clear piece from original square
         self.toggle_piece(from, piece_type, color);
@@ -48,24 +89,20 @@ impl Board {
         match move_type {
             MoveType::Capture => self.toggle_piece(to, captured_piece, captured_color),
             MoveType::EnPassantCapture => {
-                let captured_pawn_square = match color {
-                    Color::White => to - BOARD_WIDTH as Square,
-                    Color::Black => to + BOARD_WIDTH as Square,
-                };
-                self.toggle_piece(captured_pawn_square, Piece::Pawn, enemy);
+                self.toggle_piece(Board::get_en_passant_target(to, color), Piece::Pawn, enemy);
             }
             MoveType::KingSideCastle => {
                 let (rook_from, rook_to) = match color {
-                    Color::White => (7, 5),
-                    Color::Black => (63, 61),
+                    Color::White => (7, 5),   // h1 -> f1
+                    Color::Black => (63, 61), // h8 -> f1
                 };
                 self.toggle_piece(rook_from, Piece::Rook, color);
                 self.toggle_piece(rook_to, Piece::Rook, color);
             }
             MoveType::QueenSideCastle => {
                 let (rook_from, rook_to) = match color {
-                    Color::White => (0, 3),
-                    Color::Black => (56, 59),
+                    Color::White => (0, 3),   // a1 -> d1
+                    Color::Black => (56, 59), // a8 -> d8
                 };
                 self.toggle_piece(rook_from, Piece::Rook, color);
                 self.toggle_piece(rook_to, Piece::Rook, color);
@@ -76,24 +113,21 @@ impl Board {
         // Land the moved piece
         self.toggle_piece(to, final_type, color);
 
-        let initial_en_passant = self.en_passant_square;
+        let old_en_passant = self.en_passant_square;
         self.en_passant_square = if move_type == MoveType::DoublePawnPush {
-            Some(match color {
-                Color::White => to - BOARD_WIDTH as Square,
-                Color::Black => to + BOARD_WIDTH as Square,
-            })
+            Some(Board::get_en_passant_target(to, color))
         } else {
             None
         };
 
-        let initial_clock = self.halfmove_clock;
+        let old_clock = self.halfmove_clock;
         if piece_type == Piece::Pawn || move_type == MoveType::Capture {
             self.halfmove_clock = 0;
         } else {
             self.halfmove_clock += 1;
         };
 
-        let initial_rights = self.castling_rights;
+        let old_rights = self.castling_rights;
         if piece_type == Piece::King {
             self.castling_rights &= !(match color {
                 Color::White => Castling::WK | Castling::WQ,
@@ -108,30 +142,22 @@ impl Board {
 
         self.side_to_move = enemy;
 
-        self.zobrist ^= *ZOBRIST_SIDE;
-        if initial_en_passant != self.en_passant_square {
-            self.zobrist ^= initial_en_passant.map_or(0u64, |en_passant: Square| {
-                ZOBRIST_EN_PASSANT[(en_passant / BOARD_WIDTH as Square) as usize]
-            });
-            self.zobrist ^= self.en_passant_square.map_or(0u64, |en_passant: Square| {
-                ZOBRIST_EN_PASSANT[(en_passant / BOARD_WIDTH as Square) as usize]
-            });
-        }
-        if initial_rights != self.castling_rights {
-            self.zobrist ^= ZOBRIST_CASTLING[initial_rights as usize];
-            self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights as usize];
-        }
+        self.update_zobrist(old_en_passant, old_rights);
 
         Undo {
-            mov: mov,
+            mov,
             captured: captured_piece,
-            en_passant_square: initial_en_passant,
-            halfmove_clock: initial_clock,
-            castling_rights: initial_rights,
-            zobrist: initial_zobrist,
+            en_passant_square: old_en_passant,
+            halfmove_clock: old_clock,
+            castling_rights: old_rights,
+            zobrist: old_zobrist,
         }
     }
 
+    /// Undo a move on the board, restoring to the previous state (before `make_move`)
+    ///
+    /// # Preconditions
+    /// - `undo` from `make_move`
     #[inline(always)]
     pub fn undo_move(&mut self, undo: &Undo) {
         self.en_passant_square = undo.en_passant_square;
@@ -164,24 +190,24 @@ impl Board {
         match move_type {
             MoveType::Capture => self.toggle_piece(to, undo.captured, color.toggle()),
             MoveType::EnPassantCapture => {
-                let captured_pawn_square = match color {
-                    Color::White => to - BOARD_WIDTH as Square,
-                    Color::Black => to + BOARD_WIDTH as Square,
-                };
-                self.toggle_piece(captured_pawn_square, Piece::Pawn, color.toggle());
+                self.toggle_piece(
+                    Board::get_en_passant_target(to, color),
+                    Piece::Pawn,
+                    color.toggle(),
+                );
             }
             MoveType::KingSideCastle => {
                 let (rook_from, rook_to) = match color {
-                    Color::White => (7, 5),
-                    Color::Black => (63, 61),
+                    Color::White => (7, 5),   // h1 -> f1
+                    Color::Black => (63, 61), // h8 -> f1
                 };
                 self.toggle_piece(rook_from, Piece::Rook, color);
                 self.toggle_piece(rook_to, Piece::Rook, color);
             }
             MoveType::QueenSideCastle => {
                 let (rook_from, rook_to) = match color {
-                    Color::White => (0, 3),
-                    Color::Black => (56, 59),
+                    Color::White => (0, 3),   // a1 -> d1
+                    Color::Black => (56, 59), // a8 -> d8
                 };
                 self.toggle_piece(rook_from, Piece::Rook, color);
                 self.toggle_piece(rook_to, Piece::Rook, color);

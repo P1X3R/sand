@@ -132,14 +132,16 @@ impl Board {
 
     /// This function doesn't update zobrist based on piece positioning because `toggle_piece`
     /// already does it
-    fn update_zobrist(&mut self) {
+    fn set_zobrist_fen(&mut self) {
         if self.side_to_move == Color::Black {
             self.zobrist ^= *ZOBRIST_SIDE;
         }
+
         if let Some(en_passant_square) = self.en_passant_square {
-            let en_passant_file = (en_passant_square / BOARD_WIDTH as Square) as usize;
+            let en_passant_file = (en_passant_square % BOARD_WIDTH as Square) as usize;
             self.zobrist ^= ZOBRIST_EN_PASSANT[en_passant_file];
         }
+
         self.zobrist ^= ZOBRIST_CASTLING[self.castling_rights as usize];
     }
 
@@ -231,9 +233,50 @@ impl Board {
             board.halfmove_clock = halfmove_clock;
         }
 
-        board.update_zobrist();
+        board.set_zobrist_fen();
 
         Ok(board)
+    }
+
+    /// Get bitboard for a piece type for both colors
+    fn get_bitboard(&self, piece_type: Piece) -> u64 {
+        self.bitboards[Color::White as usize][piece_type as usize]
+            | self.bitboards[Color::Black as usize][piece_type as usize]
+    }
+
+    /// Checks for insufficient material draws: KvK, KvN, KvB, and KvNN
+    #[inline(always)]
+    pub fn is_insufficient_material(&self) -> bool {
+        // No pawns, rooks, or queens on board
+        let no_major_pieces = [Piece::Pawn, Piece::Rook, Piece::Queen]
+            .iter()
+            .map(|piece_type| self.get_bitboard(*piece_type))
+            .fold(0u64, |accumulated, bitboard| accumulated | bitboard)
+            == 0u64;
+
+        // At least one side has only their king (check for "not several pieces")
+        let either_side_bare_king = self.occupancies[Color::White as usize]
+            == self.bitboards[Color::White as usize][Piece::King as usize]
+            || self.occupancies[Color::Black as usize]
+                == self.bitboards[Color::Black as usize][Piece::King as usize];
+
+        let bishops = self.get_bitboard(Piece::Bishop);
+        let knights = self.get_bitboard(Piece::Knight);
+        let minor_pieces = bishops | knights;
+
+        // At most one minor piece total (using n & (n-1) == 0 to check ≤1 bit set)
+        let at_most_one_minor = minor_pieces & (minor_pieces - 1) == 0u64;
+
+        // No bishops and at most 2 knights (handles K+NN vs K)
+        let only_knights_and_few = bishops == 0u64 && knights.count_ones() <= 2;
+
+        // Matches: KvK, KvN, KvB, KvNN
+        no_major_pieces && either_side_bare_king && (at_most_one_minor || only_knights_and_few)
+    }
+
+    #[inline(always)]
+    pub fn is_fifty_move(&self) -> bool {
+        self.halfmove_clock >= 100
     }
 }
 
