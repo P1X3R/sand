@@ -3,6 +3,8 @@ use super::zobrist::*;
 pub const BOARD_WIDTH: usize = 8;
 pub const BOARD_SIZE: usize = 64;
 
+pub const STARTPOS_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
 pub type Square = u8;
 pub fn square_from_uci(uci: &str) -> Result<Square, &'static str> {
     let mut chars = uci.chars();
@@ -16,7 +18,7 @@ pub fn square_from_uci(uci: &str) -> Result<Square, &'static str> {
         return Ok(square);
     }
 
-    Err("Invalid character for square")
+    Err("invalid character for square")
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -53,7 +55,7 @@ impl Piece {
             'r' => Ok(Piece::Rook),
             'q' => Ok(Piece::Queen),
             'k' => Ok(Piece::King),
-            _ => Err("Invalid character"),
+            _ => Err("invalid character"),
         }
     }
 
@@ -153,7 +155,7 @@ impl Board {
             match chr {
                 '/' => {
                     if rank == 0 {
-                        return Err("Too many ranks");
+                        return Err("too many ranks");
                     }
                     rank -= 1;
                     file = 0;
@@ -169,7 +171,7 @@ impl Board {
                         Color::Black
                     };
                     if file >= BOARD_WIDTH as u8 {
-                        return Err("File out of bounds");
+                        return Err("file out of bounds");
                     }
                     self.toggle_piece(to_square(rank as i8, file as i8), piece_type, color);
                     file += 1;
@@ -178,7 +180,7 @@ impl Board {
         }
 
         if rank != 0 || file != BOARD_WIDTH as u8 {
-            return Err("Incomplete board");
+            return Err("incomplete board");
         }
 
         Ok(())
@@ -202,7 +204,7 @@ impl Board {
         if let Some(positioning_part) = tokens.next() {
             board.parse_positioning(positioning_part)?;
         } else {
-            return Err("No piece placement part found");
+            return Err("no piece placement part found");
         }
 
         board.side_to_move = match tokens.next().and_then(|s| s.chars().next()) {
