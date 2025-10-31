@@ -106,7 +106,7 @@ impl Move {
         }
     }
 
-    fn get_move_type(from: Square, to: Square, board: &Board) -> MoveType {
+    pub fn get_move_type(from: Square, to: Square, board: &Board) -> MoveType {
         let (piece, _) = board.pieces[from as usize];
         let lands_in_piece = board.pieces[to as usize].0 != Piece::None;
 
@@ -130,29 +130,5 @@ impl Move {
         }
 
         MoveType::Quiet
-    }
-
-    pub fn from_uci(uci: &str, board: &Board) -> Result<Move, &'static str> {
-        if uci.len() < 4 {
-            return Err("invalid move");
-        }
-
-        let from: Square = square_from_uci(&uci[0..2])?;
-        let to: Square = square_from_uci(&uci[2..4])?;
-        let promotion: Piece = uci
-            .as_bytes()
-            .get(4)
-            .and_then(|&b| Piece::from_char(b as char).ok())
-            .unwrap_or(Piece::None);
-        let move_type: MoveType = Move::get_move_type(from, to, board);
-
-        Ok(Move::new(
-            from,
-            to,
-            MoveFlag {
-                move_type,
-                promotion,
-            },
-        ))
     }
 }

@@ -1,16 +1,16 @@
 use crate::chess::board::{Board, Color, PIECE_TYPES};
 
-const PIECE_VALUES: [i16; PIECE_TYPES.len() + 1] = [100, 320, 330, 500, 900, 20000, 0];
+const PIECE_VALUES: [i16; PIECE_TYPES.len()] = [100, 320, 330, 500, 900, 20000];
 
 // Provisional material only
 impl Board {
     pub fn evaluate(&self) -> i16 {
-        self.pieces.iter().fold(0i16, |score, (piece_type, color)| {
-            score
-                + match color {
-                    Color::White => PIECE_VALUES[*piece_type as usize],
-                    Color::Black => -PIECE_VALUES[*piece_type as usize],
-                }
-        })
+        let mut score = 0i16;
+        for piece_type in PIECE_TYPES {
+            let w = self.bitboards[Color::White as usize][piece_type as usize].count_ones() as i16;
+            let b = self.bitboards[Color::Black as usize][piece_type as usize].count_ones() as i16;
+            score += (w - b) * PIECE_VALUES[piece_type as usize];
+        }
+        score
     }
 }

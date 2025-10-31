@@ -240,45 +240,64 @@ impl Board {
         Ok(board)
     }
 
-    /// Get bitboard for a piece type for both colors
-    fn get_bitboard(&self, piece_type: Piece) -> u64 {
-        self.bitboards[Color::White as usize][piece_type as usize]
-            | self.bitboards[Color::Black as usize][piece_type as usize]
-    }
-
     /// Checks for insufficient material draws: KvK, KvN, KvB, and KvNN
     #[inline(always)]
     pub fn is_insufficient_material(&self) -> bool {
-        // No pawns, rooks, or queens on board
-        let no_major_pieces = [Piece::Pawn, Piece::Rook, Piece::Queen]
-            .iter()
-            .map(|piece_type| self.get_bitboard(*piece_type))
-            .fold(0u64, |accumulated, bitboard| accumulated | bitboard)
-            == 0u64;
+        let (mut pawn_rook_queen, mut bishop, mut knight) = (0u64, 0u64, 0u64);
+        for color in 0..2 {
+            pawn_rook_queen |= self.bitboards[color][Piece::Pawn as usize]
+                | self.bitboards[color][Piece::Rook as usize]
+                | self.bitboards[color][Piece::Queen as usize];
+            bishop |= self.bitboards[color][Piece::Bishop as usize];
+            knight |= self.bitboards[color][Piece::Knight as usize];
+        }
+        if pawn_rook_queen != 0 {
+            return false;
+        }
 
-        // At least one side has only their king (check for "not several pieces")
-        let either_side_bare_king = self.occupancies[Color::White as usize]
-            == self.bitboards[Color::White as usize][Piece::King as usize]
-            || self.occupancies[Color::Black as usize]
-                == self.bitboards[Color::Black as usize][Piece::King as usize];
+        let minors = bishop | knight;
+        let either_bare = self.occupancies[Color::White as usize].count_ones() == 1
+            || self.occupancies[Color::White as usize].count_ones() == 1;
 
-        let bishops = self.get_bitboard(Piece::Bishop);
-        let knights = self.get_bitboard(Piece::Knight);
-        let minor_pieces = bishops | knights;
-
-        // At most one minor piece total (using n & (n-1) == 0 to check ≤1 bit set)
-        let at_most_one_minor = minor_pieces & (minor_pieces - 1) == 0u64;
-
-        // No bishops and at most 2 knights (handles K+NN vs K)
-        let only_knights_and_few = bishops == 0u64 && knights.count_ones() <= 2;
-
-        // Matches: KvK, KvN, KvB, KvNN
-        no_major_pieces && either_side_bare_king && (at_most_one_minor || only_knights_and_few)
+        either_bare && (minors & (minors - 1) == 0 || (bishop == 0 && knight.count_ones() <= 2))
     }
 
     #[inline(always)]
     pub fn is_fifty_move(&self) -> bool {
         self.halfmove_clock >= 100
+    }
+
+    pub fn calculate_zobrist(&self) -> u64 {
+        let mut piece_zobrist = 0u64;
+        for color in [Color::White, Color::Black] {
+            for piece_type in PIECE_TYPES {
+                let mut bitboard = self.bitboards[color as usize][piece_type as usize];
+                while bitboard != 0 {
+                    let square = bitboard.trailing_zeros();
+                    piece_zobrist ^=
+                        ZOBRIST_PIECE[color as usize][piece_type as usize][square as usize];
+                    bitboard &= bitboard - 1;
+                }
+            }
+        }
+
+        let side_to_move_zobrist = if self.side_to_move == Color::Black {
+            *ZOBRIST_SIDE
+        } else {
+            0u64
+        };
+
+        let en_passant_zobrist = if let Some(en_passant_square) = self.en_passant_square {
+            let en_passant_file = en_passant_square % BOARD_WIDTH as Square;
+            ZOBRIST_EN_PASSANT[en_passant_file as usize]
+        } else {
+            0u64
+        };
+
+        piece_zobrist
+            ^ side_to_move_zobrist
+            ^ ZOBRIST_CASTLING[self.castling_rights as usize]
+            ^ en_passant_zobrist
     }
 }
 
