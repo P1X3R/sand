@@ -73,11 +73,12 @@ impl Uci {
             Some("uci") => {
                 send!("id name Sand");
                 send!("id author P1x3r");
+                send!("option name Ponder type check default false");
                 send!("uciok");
             }
             Some("debug") => {}
             Some("isready") => send!("readyok"),
-            Some("setoption") => todo!(),
+            Some("setoption") => {}
             Some("register") => send!("registration ok"),
             Some("ucinewgame") => {
                 self.stop_and_join();
@@ -94,7 +95,8 @@ impl Uci {
             }
             Some("go") => self.handle_go(tokens),
             Some("stop") => self.searcher.stop_search(),
-            Some("ponderhit") => todo!(),
+            Some("ponderhit") => self.searcher.stop_pondering(),
+
             Some("quit") => {
                 self.stop_and_join();
                 return true;
@@ -115,32 +117,29 @@ impl Uci {
 
     fn handle_position(&mut self, tokens: &mut SplitWhitespace) -> Result<(), &'static str> {
         let fen: String = match tokens.next() {
-            Some("fen") => {
-                let mut f = String::new();
-                for part in tokens.take_while(|&t| t != "moves") {
-                    if !f.is_empty() {
-                        f.push(' ');
-                    }
-                    f.push_str(part);
-                }
-                f
-            }
-            _ => STARTPOS_FEN.to_string(), // Handles `startpos` indirectly
+            Some("startpos") => STARTPOS_FEN.to_string(),
+            Some("fen") => tokens
+                .by_ref()
+                .take_while(|&t| t != "moves")
+                .collect::<Vec<&str>>()
+                .join(" "),
+            _ => STARTPOS_FEN.to_string(),
         };
 
         self.position_board = Board::new(&fen)?;
         self.position_history.clear();
+        self.position_history.push(self.position_board.zobrist);
 
         if tokens.next() == Some("moves") {
             for move_uci in tokens {
                 // check pseudo-legality
                 let move_list = gen_color_moves(&self.position_board);
                 let Some(&mov) = move_list.iter().find(|m| m.to_uci() == move_uci) else {
-                    continue;
+                    continue; // Silently ignore invalid moves
                 };
 
-                self.position_board.make_move(mov);
                 self.position_history.push(self.position_board.zobrist);
+                self.position_board.make_move(mov);
             }
         }
 
@@ -188,7 +187,7 @@ impl Uci {
                     }
                 }
                 "infinite" => time_control.infinite = true,
-                "ponder" => time_control.ponder = true,
+                "ponder" => self.searcher.start_pondering(),
                 _ => {}
             }
         }
@@ -196,10 +195,17 @@ impl Uci {
         time_control.clock_time = has_clock_time.then_some(clock_time);
         self.searcher.stop_search();
 
+        // Spawn a new searcher thread
         let mut searcher = self.searcher.clone();
         searcher.time_control = time_control;
+
         self.worker = Some(std::thread::spawn(move || {
-            send!("bestmove {}", searcher.start_search().to_uci());
+            let (best_move, ponder_move) = searcher.start_search();
+            if let Some(p) = ponder_move {
+                send!("bestmove {} ponder {}", best_move.to_uci(), p.to_uci());
+            } else {
+                send!("bestmove {}", best_move.to_uci());
+            }
         }));
     }
 

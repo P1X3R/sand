@@ -17,7 +17,7 @@ use crate::{
 };
 use tinyvec::ArrayVec;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct ClockTime {
     pub white_time_ms: u64,
     pub black_time_ms: u64,
@@ -31,7 +31,6 @@ pub struct TimeControl {
     pub depth: Option<usize>,
     pub clock_time: Option<ClockTime>,
     pub infinite: bool,
-    pub ponder: bool,
     pub start_time: Instant,
 }
 
@@ -42,7 +41,6 @@ impl Default for TimeControl {
             depth: None,
             clock_time: None,
             infinite: false,
-            ponder: false,
             start_time: Instant::now(),
         }
     }
@@ -82,27 +80,33 @@ impl PvTable {
 
 #[derive(Clone)]
 pub struct Searcher {
+    // Core search
     board: Board,
-    history: ArrayVec<[u64; 1024]>, // For three-fold repetition
-    pub time_control: TimeControl,
-    stop: Arc<AtomicBool>,
+    history: ArrayVec<[u64; 1024]>,
     pv_table: PvTable,
     nodes: usize,
+
+    // Timing
+    pub time_control: TimeControl,
+    time_ms: Option<u64>,
+    was_pondering: bool,
+
+    // External control
+    stop: Arc<AtomicBool>,
+    ponder: Arc<AtomicBool>,
 }
 
 impl Searcher {
     const MAX_PLY: usize = 64;
-    const CHECKMATE_SCORE: i16 = 20_000;
-    const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - Searcher::MAX_PLY as i16 - 1;
-    const INF: i16 = 30_000;
-    const DRAW_SCORE: i16 = 0;
+    const CHECKMATE_SCORE: i16 = 30_000;
+    const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - 2 * Searcher::MAX_PLY as i16;
+    const INF: i16 = 32_000;
 
     #[inline(always)]
     fn is_three_fold_repetition(&self) -> bool {
         self.history
             .iter()
             .rev()
-            .skip(2) // skip current position
             .step_by(2) // check only positions with same side to move
             .take(self.board.halfmove_clock as usize / 2)
             .filter(|&&zobrist| zobrist == self.board.zobrist)
@@ -120,10 +124,8 @@ impl Searcher {
 
     #[inline(always)]
     fn push_move(&mut self, mov: Move) -> Undo {
-        let undo = self.board.make_move(mov);
         self.history.push(self.board.zobrist);
-
-        undo
+        self.board.make_move(mov)
     }
 
     #[inline(always)]
@@ -145,44 +147,63 @@ impl Searcher {
         color_time_ms / 20 + color_increment_ms / 2
     }
 
-    pub fn start_search(&mut self) -> Move {
+    pub fn start_search(&mut self) -> (Move, Option<Move>) {
         let control = &self.time_control;
 
         // Guard stop flag
         self.stop.store(false, Ordering::Relaxed);
 
-        if control.ponder {
-            // Set to 0 ms by default to automatically stop once `ponderhit` if GUI sent just:
-            // `go ponder` with no time control
-            let time_ms = control.clock_time.as_ref().map_or(0, |clock_time| {
-                Searcher::calculate_time_from_clock(self.board.side_to_move, clock_time)
-            });
-
-            return self.iterative_deepening(Some(time_ms), None);
-        } else if let Some(move_time) = control.move_time {
-            return self.iterative_deepening(Some(move_time), None);
-        } else if let Some(depth) = control.depth {
-            return self.iterative_deepening(None, Some(depth));
+        // Initialize worker-local timing state according to mode
+        if self.ponder.load(Ordering::Relaxed) {
+            // If starting in ponder, compute the time we'd use *after* ponderhit but
+            // DO NOT reset start_time here — the worker must wait for ponderhit to start clock.
+            self.time_ms = control
+                .clock_time
+                .as_ref()
+                .map(|ct| Searcher::calculate_time_from_clock(self.board.side_to_move, ct))
+                .or(control.move_time);
+            self.was_pondering = true;
+        } else if let Some(mt) = control.move_time {
+            self.time_ms = Some(mt);
+            self.was_pondering = false;
+        } else if control.depth.is_some() {
+            self.time_ms = None;
+            self.was_pondering = false;
         } else if let Some(clock_time) = &control.clock_time {
-            return self.iterative_deepening(
-                Some(Searcher::calculate_time_from_clock(
-                    self.board.side_to_move,
-                    clock_time,
-                )),
-                None,
-            );
+            self.time_ms = Some(Searcher::calculate_time_from_clock(
+                self.board.side_to_move,
+                clock_time,
+            ));
+            self.was_pondering = false;
         } else if control.infinite {
-            return self.iterative_deepening(None, None);
+            self.time_ms = None;
+            self.was_pondering = false;
+        } else {
+            self.time_ms = None;
+            self.was_pondering = false;
         }
 
-        self.iterative_deepening(None, Some(1)) // Dummy and fast search by default
+        let (best_move, ponder_move) = if self.was_pondering {
+            // When pondering, iterative_deepening runs and will await ponderhit
+            self.iterative_deepening(None)
+        } else if control.depth.is_some() {
+            self.iterative_deepening(control.depth)
+        } else {
+            self.iterative_deepening(None)
+        };
+
+        // ensure local ponder flag cleared (the Arc is shared across clones)
+        self.ponder.store(false, Ordering::Relaxed);
+
+        (best_move, ponder_move)
     }
 
     #[inline(always)]
-    fn time_to_stop(&self, time_ms: Option<u64>) -> bool {
+    fn time_to_stop(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
-            || time_ms.is_some_and(|ms| {
-                !self.time_control.ponder
+            || self.time_ms.is_some_and(|ms| {
+                !self.ponder.load(Ordering::Relaxed)
+                    && !self.was_pondering
                     && self.time_control.start_time.elapsed().as_millis() >= ms as u128
             })
     }
@@ -219,10 +240,11 @@ impl Searcher {
         );
     }
 
-    fn iterative_deepening(&mut self, time_ms: Option<u64>, depth: Option<usize>) -> Move {
+    fn iterative_deepening(&mut self, depth: Option<usize>) -> (Move, Option<Move>) {
         let move_list = gen_color_moves(&self.board);
         let mut best_move: Move = move_list[0];
         let mut current_depth = 1;
+        let mut ponder_move: Option<Move> = None;
 
         loop {
             let (mut alpha, beta) = (-Searcher::INF, Searcher::INF);
@@ -232,18 +254,38 @@ impl Searcher {
             let mut last_info_time = Duration::ZERO;
 
             for (number, &mov) in move_list.iter().enumerate() {
+                // If we started in ponder mode and now ponder has been turned off, initialize timing here:
+                if self.was_pondering && !self.ponder.load(Ordering::Relaxed) {
+                    // Reset the worker's clock now that GUI said ponderhit
+                    self.time_control.start_time = Instant::now();
+
+                    // Recompute time_ms from the worker's own time_control (it may be Option)
+                    if let Some(clock_time) = self.time_control.clock_time {
+                        self.time_ms = Some(Searcher::calculate_time_from_clock(
+                            self.board.side_to_move,
+                            &clock_time,
+                        ));
+                    }
+                    // if it was a movetime control, self.time_ms was already set in start_search
+                    // Otherwise leave None for infinite
+
+                    self.was_pondering = false;
+
+                    continue;
+                }
+
                 // Inline manually to avoid calling `.elapsed()` twice
                 let elapsed = self.time_control.start_time.elapsed();
 
                 if self.stop.load(Ordering::Relaxed)
-                    || time_ms.is_some_and(|ms| {
-                        !self.time_control.ponder && elapsed.as_millis() >= ms as u128
+                    || self.time_ms.is_some_and(|ms| {
+                        !self.ponder.load(Ordering::Relaxed) && elapsed.as_millis() >= ms as u128
                     })
                 {
                     break;
                 }
 
-                if elapsed.as_millis() - last_info_time.as_millis() >= 1000 {
+                if elapsed - last_info_time >= Duration::from_secs(1) {
                     send!(
                         "info depth {current_depth} currmove {} currmovenumber {}",
                         mov.to_uci(),
@@ -254,7 +296,7 @@ impl Searcher {
 
                 let undo = self.push_move(mov);
                 if is_legal_move(mov, &self.board) {
-                    let score = -self.search(-beta, -alpha, current_depth - 1, 1, time_ms);
+                    let score = -self.search(-beta, -alpha, current_depth - 1, 1);
                     if score > best_score {
                         step_best_move = mov;
                         best_score = score;
@@ -272,43 +314,47 @@ impl Searcher {
             }
             let searching_time = self.time_control.start_time.elapsed();
 
-            if self.time_to_stop(time_ms) || current_depth >= depth.unwrap_or(Searcher::MAX_PLY) {
+            if self.time_to_stop() || current_depth >= depth.unwrap_or(Searcher::MAX_PLY) {
                 break;
             }
 
             best_move = step_best_move;
+            ponder_move = self.pv_table.get(0).get(1).cloned();
             self.print_info(searching_time, best_score, current_depth);
 
             current_depth += 1;
             self.nodes = 0;
         }
 
-        best_move
+        (best_move, ponder_move)
+    }
+
+    /// draw score formula
+    #[inline(always)]
+    fn get_draw_score(eval: i16) -> i16 {
+        (-eval / 10).clamp(-100, 100)
     }
 
     /// In centipawn
-    fn search(
-        &mut self,
-        mut alpha: i16,
-        beta: i16,
-        depth: usize,
-        ply: usize,
-        time_ms: Option<u64>,
-    ) -> i16 {
-        const NODE_MASK: usize = 1023;
-
+    fn search(&mut self, mut alpha: i16, beta: i16, depth: usize, ply: usize) -> i16 {
         self.nodes += 1;
+
+        const NODE_MASK: usize = 1023;
+        let check_timeout = self.nodes & NODE_MASK == 0;
+
         let color = self.board.side_to_move;
+        let static_eval = match color {
+            Color::White => self.board.evaluate(),
+            Color::Black => -self.board.evaluate(),
+        };
 
         if self.is_draw() {
             self.pv_table.clear(ply);
-            return Searcher::DRAW_SCORE;
+            return Searcher::get_draw_score(static_eval);
         }
-        if depth == 0 || (self.nodes & NODE_MASK == 0 && self.time_to_stop(time_ms)) {
-            return match color {
-                Color::White => self.board.evaluate(),
-                Color::Black => -self.board.evaluate(),
-            };
+
+        if depth == 0 || (check_timeout && self.time_to_stop()) {
+            return static_eval;
         }
 
         let mate_score = Searcher::CHECKMATE_SCORE - ply as i16;
@@ -323,7 +369,7 @@ impl Searcher {
             }
 
             found_legal_move = true;
-            let score = -self.search(-beta, -alpha, depth - 1, ply + 1, time_ms);
+            let score = -self.search(-beta, -alpha, depth - 1, ply + 1);
 
             self.pop_move(&undo);
 
@@ -337,24 +383,21 @@ impl Searcher {
             if alpha >= beta {
                 return alpha;
             }
-            if self.nodes & NODE_MASK == 0 && self.time_to_stop(time_ms) {
+            if check_timeout && self.time_to_stop() {
                 return alpha;
             }
         }
 
         if !found_legal_move {
             self.pv_table.clear(ply);
-            let in_check = is_square_attacked(
-                self.board.bitboards[color as usize][Piece::King as usize].trailing_zeros()
-                    as Square,
-                color.toggle(),
-                &self.board,
-            );
+            let king_square = self.board.bitboards[color as usize][Piece::King as usize]
+                .trailing_zeros() as Square;
+            let in_check = is_square_attacked(king_square, color.toggle(), &self.board);
 
             return if in_check {
                 -mate_score
             } else {
-                Searcher::DRAW_SCORE
+                Searcher::get_draw_score(static_eval)
             };
         }
 
@@ -365,20 +408,37 @@ impl Searcher {
         Searcher {
             board: Board::new(STARTPOS_FEN).unwrap(),
             history: ArrayVec::new(),
-            time_control: TimeControl::default(),
-            stop: Arc::from(AtomicBool::new(false)),
             pv_table: PvTable {
                 pv: [ArrayVec::new(); Searcher::MAX_PLY],
             },
             nodes: 0,
+
+            time_control: TimeControl::default(),
+            time_ms: None,
+            was_pondering: false,
+
+            stop: Arc::new(AtomicBool::new(false)),
+            ponder: Arc::new(AtomicBool::new(false)),
         }
     }
 
+    #[inline(always)]
+    pub fn start_pondering(&mut self) {
+        self.ponder.store(true, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn stop_pondering(&mut self) {
+        self.ponder.store(false, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
     pub fn copy_pos(&mut self, board: &Board, history: &ArrayVec<[u64; 1024]>) {
         self.board = board.clone();
         self.history = *history;
     }
 
+    #[inline(always)]
     pub fn stop_search(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }

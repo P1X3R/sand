@@ -258,8 +258,9 @@ impl Board {
         let minors = bishop | knight;
         let either_bare = self.occupancies[Color::White as usize].count_ones() == 1
             || self.occupancies[Color::White as usize].count_ones() == 1;
+        let have_one_minor = minors == 0 || minors & (minors - 1) == 0;
 
-        either_bare && (minors & (minors - 1) == 0 || (bishop == 0 && knight.count_ones() <= 2))
+        either_bare && (have_one_minor || (bishop == 0 && knight.count_ones() <= 2))
     }
 
     #[inline(always)]
