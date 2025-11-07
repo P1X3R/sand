@@ -1,4 +1,5 @@
 use super::zobrist::*;
+use crate::evaluation::W;
 
 pub const BOARD_WIDTH: usize = 8;
 pub const BOARD_SIZE: usize = 64;
@@ -100,6 +101,10 @@ pub struct Board {
     pub halfmove_clock: u8,
     pub castling_rights: u8, // 4 bits for KQkq
     pub side_to_move: Color,
+
+    pub bonus: [W; 2],
+    pub material: [i16; 2],
+    pub phase: usize,
 }
 
 impl Board {
@@ -107,7 +112,7 @@ impl Board {
     /// - If the square is empty, the piece is added.
     /// - If the same piece/color is present, it is removed.
     ///
-    /// Updates bitboards, occupancies, and Zobrist accordingly.
+    /// Updates bitboards, occupancies, Zobrist and evaluation terms accordingly.
     #[inline(always)]
     pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
         let square_bit = bit(square);
@@ -121,10 +126,24 @@ impl Board {
             (current_piece, current_color),
         );
 
-        self.pieces[square as usize] = if current_piece == Piece::None {
-            (piece_type, color)
+        // mirror for whites because:
+        // table index    -> 0=a8 63=h1
+        // engine square  -> 0=a1 63=h8
+        let square_lookup = match color {
+            Color::White => square as usize ^ 56, // ^ 56 mirrors vertically
+            Color::Black => square as usize,
+        };
+
+        if current_piece == Piece::None {
+            self.phase += Board::PHASE_VALUE[piece_type as usize];
+            self.bonus[color as usize] += Board::PST[piece_type as usize][square_lookup];
+            self.material[color as usize] += Board::PIECE_VALUES[piece_type as usize];
+            self.pieces[square as usize] = (piece_type, color)
         } else {
-            (Piece::None, Color::White)
+            self.phase -= Board::PHASE_VALUE[piece_type as usize];
+            self.bonus[color as usize] -= Board::PST[piece_type as usize][square_lookup];
+            self.material[color as usize] -= Board::PIECE_VALUES[piece_type as usize];
+            self.pieces[square as usize] = (Piece::None, Color::White)
         };
         self.bitboards[color as usize][piece_type as usize] ^= square_bit;
         self.occupancies[color as usize] ^= square_bit;
@@ -199,6 +218,10 @@ impl Board {
             halfmove_clock: 0,
             castling_rights: 0,
             side_to_move: Color::White,
+
+            bonus: [W(0, 0); 2],
+            phase: 0,
+            material: [0; 2],
         };
 
         if let Some(positioning_part) = tokens.next() {

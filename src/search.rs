@@ -8,7 +8,9 @@ use std::{
 
 use crate::{
     chess::{
-        attacks::movegen::{gen_color_moves, is_legal_move, is_square_attacked},
+        attacks::movegen::{
+            gen_capture_promotion_moves, gen_color_moves, is_legal_move, is_square_attacked,
+        },
         board::{Board, Color, Piece, STARTPOS_FEN, Square},
         make_move::Undo,
         moves::Move,
@@ -80,18 +82,21 @@ impl PvTable {
 
 #[derive(Clone)]
 pub struct Searcher {
-    // Core search
+    // core search
     board: Board,
     history: ArrayVec<[u64; 1024]>,
     pv_table: PvTable,
-    nodes: usize,
 
-    // Timing
+    // search info tracking
+    nodes: usize,
+    seldepth: usize,
+
+    // timing
     pub time_control: TimeControl,
     time_ms: Option<u64>,
     was_pondering: bool,
 
-    // External control
+    // external control
     stop: Arc<AtomicBool>,
     ponder: Arc<AtomicBool>,
 }
@@ -100,6 +105,7 @@ impl Searcher {
     const MAX_PLY: usize = 64;
     const CHECKMATE_SCORE: i16 = 30_000;
     const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - 2 * Searcher::MAX_PLY as i16;
+    const NODE_MASK: usize = 1023;
     const INF: i16 = 32_000;
 
     #[inline(always)]
@@ -150,12 +156,12 @@ impl Searcher {
     pub fn start_search(&mut self) -> (Move, Option<Move>) {
         let control = &self.time_control;
 
-        // Guard stop flag
+        // guard stop flag
         self.stop.store(false, Ordering::Relaxed);
 
-        // Initialize worker-local timing state according to mode
+        // initialize worker-local timing state according to mode
         if self.ponder.load(Ordering::Relaxed) {
-            // If starting in ponder, compute the time we'd use *after* ponderhit but
+            // if starting in ponder, compute the time we'd use *after* ponderhit but
             // DO NOT reset start_time here — the worker must wait for ponderhit to start clock.
             self.time_ms = control
                 .clock_time
@@ -184,7 +190,7 @@ impl Searcher {
         }
 
         let (best_move, ponder_move) = if self.was_pondering {
-            // When pondering, iterative_deepening runs and will await ponderhit
+            // when pondering, iterative_deepening runs and will await ponderhit
             self.iterative_deepening(None)
         } else if control.depth.is_some() {
             self.iterative_deepening(control.depth)
@@ -210,7 +216,7 @@ impl Searcher {
 
     fn print_info(&self, searching_time: Duration, best_score: i16, current_depth: usize) {
         let score_str = if best_score.abs() >= Searcher::CHECKMATE_THRESHOLD {
-            // Get the mate distance and convert to full moves
+            // get the mate distance and convert to full moves
             let mate_in = (Searcher::CHECKMATE_SCORE - best_score.abs() + 1) / 2;
             let mate_in = if best_score > 0 { mate_in } else { -mate_in };
 
@@ -223,7 +229,10 @@ impl Searcher {
         let searching_time_ms = searching_time.as_millis();
 
         send!(
-            "info depth {current_depth} score {score_str} nodes {} nps {} time {} pv {}",
+            "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}",
+            current_depth,
+            self.seldepth,
+            score_str,
             self.nodes,
             nps as u64,
             if searching_time_ms == 0 {
@@ -254,12 +263,12 @@ impl Searcher {
             let mut last_info_time = Duration::ZERO;
 
             for (number, &mov) in move_list.iter().enumerate() {
-                // If we started in ponder mode and now ponder has been turned off, initialize timing here:
+                // if we started in ponder mode and now ponder has been turned off, initialize timing here:
                 if self.was_pondering && !self.ponder.load(Ordering::Relaxed) {
-                    // Reset the worker's clock now that GUI said ponderhit
+                    // reset the worker's clock now that GUI said ponderhit
                     self.time_control.start_time = Instant::now();
 
-                    // Recompute time_ms from the worker's own time_control (it may be Option)
+                    // recompute time_ms from the worker's own time_control (it may be Option)
                     if let Some(clock_time) = self.time_control.clock_time {
                         self.time_ms = Some(Searcher::calculate_time_from_clock(
                             self.board.side_to_move,
@@ -267,14 +276,14 @@ impl Searcher {
                         ));
                     }
                     // if it was a movetime control, self.time_ms was already set in start_search
-                    // Otherwise leave None for infinite
+                    // otherwise leave None for infinite
 
                     self.was_pondering = false;
 
                     continue;
                 }
 
-                // Inline manually to avoid calling `.elapsed()` twice
+                // inline manually to avoid calling `.elapsed()` twice
                 let elapsed = self.time_control.start_time.elapsed();
 
                 if self.stop.load(Ordering::Relaxed)
@@ -297,6 +306,7 @@ impl Searcher {
                 let undo = self.push_move(mov);
                 if is_legal_move(mov, &self.board) {
                     let score = -self.search(-beta, -alpha, current_depth - 1, 1);
+
                     if score > best_score {
                         step_best_move = mov;
                         best_score = score;
@@ -312,15 +322,20 @@ impl Searcher {
                 }
                 self.pop_move(&undo);
             }
-            let searching_time = self.time_control.start_time.elapsed();
 
-            if self.time_to_stop() || current_depth >= depth.unwrap_or(Searcher::MAX_PLY) {
+            if self.time_to_stop() {
                 break;
             }
+
+            let searching_time = self.time_control.start_time.elapsed();
 
             best_move = step_best_move;
             ponder_move = self.pv_table.get(0).get(1).cloned();
             self.print_info(searching_time, best_score, current_depth);
+
+            if current_depth >= depth.unwrap_or(Searcher::MAX_PLY) {
+                break;
+            }
 
             current_depth += 1;
             self.nodes = 0;
@@ -335,13 +350,18 @@ impl Searcher {
         (-eval / 10).clamp(-100, 100)
     }
 
-    /// In centipawn
+    /// in centipawn
     fn search(&mut self, mut alpha: i16, beta: i16, depth: usize, ply: usize) -> i16 {
+        if depth == 0 {
+            return self.quiescence(alpha, beta, ply);
+        }
+
         self.nodes += 1;
+        if ply > self.seldepth {
+            self.seldepth = ply;
+        }
 
-        const NODE_MASK: usize = 1023;
-        let check_timeout = self.nodes & NODE_MASK == 0;
-
+        let check_timeout = self.nodes & Searcher::NODE_MASK == 0;
         let color = self.board.side_to_move;
         let static_eval = match color {
             Color::White => self.board.evaluate(),
@@ -353,7 +373,7 @@ impl Searcher {
             return Searcher::get_draw_score(static_eval);
         }
 
-        if depth == 0 || (check_timeout && self.time_to_stop()) {
+        if check_timeout && self.time_to_stop() {
             return static_eval;
         }
 
@@ -370,7 +390,6 @@ impl Searcher {
 
             found_legal_move = true;
             let score = -self.search(-beta, -alpha, depth - 1, ply + 1);
-
             self.pop_move(&undo);
 
             if score > best_score {
@@ -388,20 +407,106 @@ impl Searcher {
             }
         }
 
-        if !found_legal_move {
+        if found_legal_move {
+            best_score
+        } else {
             self.pv_table.clear(ply);
             let king_square = self.board.bitboards[color as usize][Piece::King as usize]
                 .trailing_zeros() as Square;
             let in_check = is_square_attacked(king_square, color.toggle(), &self.board);
 
-            return if in_check {
+            if in_check {
                 -mate_score
             } else {
-                Searcher::get_draw_score(static_eval)
-            };
+                Searcher::get_draw_score(static_eval) // stalemate
+            }
+        }
+    }
+
+    fn quiescence(&mut self, mut alpha: i16, beta: i16, ply: usize) -> i16 {
+        self.nodes += 1;
+        if ply > self.seldepth {
+            self.seldepth = ply;
         }
 
-        best_score
+        let check_timeout = self.nodes & Searcher::NODE_MASK == 0;
+        let color = self.board.side_to_move;
+        let static_eval = match color {
+            Color::White => self.board.evaluate(),
+            Color::Black => -self.board.evaluate(),
+        };
+
+        if self.is_draw() {
+            return Searcher::get_draw_score(static_eval);
+        }
+
+        if (check_timeout && self.time_to_stop()) || ply >= Searcher::MAX_PLY {
+            return static_eval;
+        }
+
+        // stand-pat score
+        let mut best_score = static_eval;
+
+        // stand-pat cutoff
+        if best_score >= beta {
+            return best_score;
+        }
+        if best_score > alpha {
+            alpha = best_score;
+        }
+
+        // delta pruning
+        const DELTA_MARGIN: i16 = 75;
+        if best_score + Board::PIECE_VALUES[Piece::Queen as usize] + DELTA_MARGIN < alpha {
+            return alpha;
+        }
+
+        let mate_score = Searcher::CHECKMATE_SCORE - ply as i16;
+        let in_check = is_square_attacked(
+            self.board.bitboards[color as usize][Piece::King as usize].trailing_zeros() as Square,
+            color.toggle(),
+            &self.board,
+        );
+
+        // if in check we must generate /all/ evasions (not only captures)
+        let move_list = if in_check {
+            gen_color_moves(&self.board) // every legal move is an evasion
+        } else {
+            gen_capture_promotion_moves(&self.board)
+        };
+
+        let mut found_legal_move = false;
+        for mov in move_list {
+            let undo = self.push_move(mov);
+            if !is_legal_move(mov, &self.board) {
+                self.pop_move(&undo);
+                continue;
+            }
+
+            found_legal_move = true;
+            let score = -self.quiescence(-beta, -alpha, ply + 1);
+            self.pop_move(&undo);
+
+            if score > best_score {
+                best_score = score;
+            }
+            if score > alpha {
+                alpha = score;
+            }
+            if alpha >= beta || (check_timeout && self.time_to_stop()) {
+                return alpha;
+            }
+        }
+
+        if found_legal_move {
+            best_score
+        } else {
+            if in_check {
+                -mate_score
+            } else {
+                best_score // if no captures found: stand-pat
+            }
+        }
     }
 
     pub fn new() -> Searcher {
@@ -411,7 +516,9 @@ impl Searcher {
             pv_table: PvTable {
                 pv: [ArrayVec::new(); Searcher::MAX_PLY],
             },
+
             nodes: 0,
+            seldepth: 0,
 
             time_control: TimeControl::default(),
             time_ms: None,

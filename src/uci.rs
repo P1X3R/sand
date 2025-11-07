@@ -1,7 +1,7 @@
 use crate::{
     chess::{
         attacks::movegen::{gen_color_moves, is_legal_move},
-        board::{Board, STARTPOS_FEN},
+        board::{Board, Color, STARTPOS_FEN},
     },
     search::{ClockTime, Searcher, TimeControl},
 };
@@ -100,6 +100,18 @@ impl Uci {
             Some("quit") => {
                 self.stop_and_join();
                 return true;
+            }
+            Some("eval") => {
+                send!("bonus: {:?}", self.position_board.bonus);
+                send!("material: {:?}", self.position_board.material);
+                send!("phase: {}", self.position_board.phase);
+                send!(
+                    "static eval: {}",
+                    match self.position_board.side_to_move.toggle() {
+                        Color::White => self.position_board.evaluate(),
+                        Color::Black => -self.position_board.evaluate(),
+                    }
+                );
             }
             None => {}
             _ => send!("info string unknown command"),

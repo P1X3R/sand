@@ -2,7 +2,7 @@
 
 use rand::{Rng, SeedableRng};
 
-use crate::chess::{
+use sand::chess::{
     attacks::{
         movegen::gen_sliding_attacks,
         tables::{self, Magic, Offset},
@@ -10,8 +10,6 @@ use crate::chess::{
     board,
     board::Square,
 };
-
-mod chess;
 
 /// Given a 'relevant_mask' that marks the set of squares which can be blocked
 /// (for a rook, bishop or queen on a magic-bitboard line), and an index

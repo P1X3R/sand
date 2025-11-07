@@ -39,6 +39,22 @@ fn gen_pawn_captures(square: Square, capturable: u64, color: Color) -> u64 {
     }) & capturable
 }
 
+#[inline(always)]
+fn gen_quiet_promotions(square: Square, occupancy: u64, color: Color) -> u64 {
+    match color {
+        Color::White => {
+            let promotion_rank = RANKS[7];
+            let push: u64 = (bit(square) << BOARD_WIDTH) & !occupancy & promotion_rank;
+            push
+        }
+        Color::Black => {
+            let promotion_rank = RANKS[0];
+            let push: u64 = (bit(square) >> BOARD_WIDTH) & !occupancy & promotion_rank;
+            push
+        }
+    }
+}
+
 pub fn gen_jumping_attacks(square: Square, offsets: &[Offset]) -> u64 {
     debug_assert!(square < BOARD_SIZE as u8);
 
@@ -100,7 +116,7 @@ pub fn gen_sliding_attacks(square: Square, occupancy: u64, directions: &[Offset]
     attacks
 }
 
-// This code is textbook magic bitboards
+// this code is textbook magic bitboards
 #[inline(always)]
 pub fn get_bishop_index(square: Square, occupancy: u64) -> usize {
     let magic = &magics::BISHOP_MAGICS[square as usize];
@@ -120,7 +136,7 @@ pub fn get_rook_index(square: Square, occupancy: u64) -> usize {
 }
 
 #[inline(always)]
-pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
+fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
     let friendly = board.occupancies[color as usize];
     let enemy = board.occupancies[color.toggle() as usize];
     let occupancy_all = friendly | enemy;
@@ -130,12 +146,11 @@ pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board
 
     (match piece {
         Piece::Pawn => {
-            // Include the en passant square as a potential target, since its capture is diagonal
             let en_passant_bit = board.en_passant_square.map_or(0u64, bit);
-            let enemy_with_en_passant = en_passant_bit | enemy;
 
-            gen_pawn_pushes(square, occupancy_all, color)
-                | gen_pawn_captures(square, enemy_with_en_passant, color)
+            // include the en passant square as a potential target, since its capture is diagonal
+            gen_pawn_captures(square, en_passant_bit | enemy, color)
+                | gen_pawn_pushes(square, occupancy_all, color)
         }
         Piece::Knight => tables::KNIGHT_ATTACKS[square as usize],
         Piece::Bishop => magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)],
@@ -146,7 +161,33 @@ pub fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board
         }
         Piece::King => tables::KING_ATTACKS[square as usize],
         Piece::None => unreachable!("Tried to generate moves for an empty square"),
-    }) & !friendly // You're not supposed to capture your own pieces
+    }) & !friendly // you're not supposed to capture your own pieces
+}
+
+#[inline(always)]
+fn gen_piece_captures_promotions(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
+    let friendly = board.occupancies[color as usize];
+    let enemy = board.occupancies[color.toggle() as usize];
+    let occupancy_all = friendly | enemy;
+
+    debug_assert!(board.pieces[square as usize] == (piece, color));
+    debug_assert!(friendly & bit(square) != 0);
+
+    (match piece {
+        Piece::Pawn => {
+            gen_pawn_captures(square, enemy, color)
+                | gen_quiet_promotions(square, occupancy_all, color)
+        }
+        Piece::Knight => tables::KNIGHT_ATTACKS[square as usize],
+        Piece::Bishop => magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)],
+        Piece::Rook => magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)],
+        Piece::Queen => {
+            magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)]
+                | magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)]
+        }
+        Piece::King => tables::KING_ATTACKS[square as usize],
+        Piece::None => unreachable!("tried to generate moves for an empty square"),
+    }) & enemy // you can capture enemy pieces only
 }
 
 #[inline(always)]
@@ -207,14 +248,17 @@ fn push_with_promotions(
     }
 }
 
-pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
+fn gen_moves_by_generator(
+    board: &Board,
+    generator: fn(Square, Piece, Color, &Board) -> u64,
+) -> ArrayVec<[Move; MAX_MOVES]> {
     let mut move_list = ArrayVec::<[Move; MAX_MOVES]>::new();
     let color = board.side_to_move;
 
     for piece_type in PIECE_TYPES {
         let bitboard = board.bitboards[color as usize][piece_type as usize];
         for from in bitboard.ones_iter() {
-            let moves_bitboard = gen_piece_moves(from, piece_type, color, board);
+            let moves_bitboard = generator(from, piece_type, color, board);
             for to in moves_bitboard.ones_iter() {
                 push_with_promotions(
                     from,
@@ -228,9 +272,19 @@ pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
         }
     }
 
-    move_list.extend(get_castling_moves(board));
-
     move_list
+}
+
+#[inline(always)]
+pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
+    let mut move_list = gen_moves_by_generator(board, gen_piece_moves);
+    move_list.extend(get_castling_moves(board));
+    move_list
+}
+
+#[inline(always)]
+pub fn gen_capture_promotion_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
+    gen_moves_by_generator(board, gen_piece_captures_promotions)
 }
 
 #[inline(always)]

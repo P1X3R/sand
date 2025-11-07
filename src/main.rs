@@ -1,7 +1,4 @@
-mod chess;
-mod evaluation;
-pub mod search;
-mod uci;
+use sand::{send, uci::Uci};
 
 pub fn main() {
     std::panic::set_hook(Box::new(|info| {
@@ -31,6 +28,6 @@ pub fn main() {
         }
     }));
 
-    let mut uci = uci::Uci::new();
+    let mut uci = Uci::new();
     uci.uci_loop();
 }
