@@ -6,17 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    chess::{
-        attacks::movegen::{
-            gen_capture_promotion_moves, gen_color_moves, is_legal_move, is_square_attacked,
-        },
-        board::{Board, Color, Piece, STARTPOS_FEN, Square},
-        make_move::Undo,
-        moves::Move,
-    },
-    send,
-};
+use crate::{chess::*, send};
 use tinyvec::ArrayVec;
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -468,7 +458,7 @@ impl Searcher {
             &self.board,
         );
 
-        // if in check we must generate /all/ evasions (not only captures)
+        // if in check we must generate all evasions (not only captures)
         let move_list = if in_check {
             gen_color_moves(&self.board) // every legal move is an evasion
         } else {

@@ -1,4 +1,4 @@
-use sand::{send, uci::Uci};
+use sand::{engine::uci::Uci, send};
 
 pub fn main() {
     std::panic::set_hook(Box::new(|info| {

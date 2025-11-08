@@ -1,10 +1,4 @@
-use crate::{
-    chess::{
-        attacks::movegen::{gen_color_moves, is_legal_move},
-        board::{Board, Color, STARTPOS_FEN},
-    },
-    search::{ClockTime, Searcher, TimeControl},
-};
+use crate::{chess::*, engine::search::*};
 use std::{str::SplitWhitespace, thread::JoinHandle};
 use tinyvec::ArrayVec;
 

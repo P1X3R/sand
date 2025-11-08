@@ -1,4 +1,4 @@
-use crate::chess::board::*;
+use crate::chess::*;
 use std::ops::{AddAssign, SubAssign};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

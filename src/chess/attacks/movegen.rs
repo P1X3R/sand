@@ -1,13 +1,6 @@
 use tinyvec::ArrayVec;
 
-use crate::chess::{
-    attacks::{
-        magics,
-        tables::{self, Offset},
-    },
-    board::*,
-    moves::{Move, MoveFlag, MoveType},
-};
+use crate::chess::{attacks::magics, attacks::tables, attacks::tables::Offset, *};
 
 pub const MAX_MOVES: usize = 256;
 

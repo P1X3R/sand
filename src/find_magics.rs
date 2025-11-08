@@ -3,12 +3,8 @@
 use rand::{Rng, SeedableRng};
 
 use sand::chess::{
-    attacks::{
-        movegen::gen_sliding_attacks,
-        tables::{self, Magic, Offset},
-    },
-    board,
-    board::Square,
+    attacks::tables::{self, Magic, Offset},
+    *,
 };
 
 /// Given a 'relevant_mask' that marks the set of squares which can be blocked

@@ -1,4 +1,4 @@
-use crate::chess::board::{BOARD_SIZE, BOARD_WIDTH, PIECE_TYPES};
+use crate::chess::*;
 use rand::{Rng, SeedableRng};
 use std::array::from_fn;
 use std::sync::LazyLock;

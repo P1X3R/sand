@@ -1,8 +1,4 @@
-use crate::chess::{
-    attacks::movegen::{gen_edge_mask, gen_jumping_attacks, gen_sliding_attacks},
-    board::{BOARD_SIZE, Piece, Square},
-    moves::{MoveFlag, MoveType},
-};
+use crate::chess::*;
 use std::sync::LazyLock;
 
 #[derive(Copy, Clone)]

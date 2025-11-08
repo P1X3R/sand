@@ -1,5 +1,5 @@
 use super::zobrist::*;
-use crate::evaluation::W;
+use crate::engine::evaluation::W;
 
 pub const BOARD_WIDTH: usize = 8;
 pub const BOARD_SIZE: usize = 64;

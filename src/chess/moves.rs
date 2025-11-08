@@ -1,4 +1,4 @@
-use crate::chess::board::*;
+use crate::chess::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]

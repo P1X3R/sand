@@ -1,8 +1,4 @@
-use crate::chess::{
-    board::{BOARD_WIDTH, Board, Castling, Color, Piece, Square},
-    moves::{Move, MoveFlag, MoveType},
-    zobrist::{ZOBRIST_CASTLING, ZOBRIST_EN_PASSANT, ZOBRIST_SIDE},
-};
+use crate::chess::{zobrist::*, *};
 
 pub struct Undo {
     mov: Move,
