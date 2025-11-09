@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     chess::*,
-    engine::ordering::{ScoredIter, SearchContext, score},
+    engine::ordering::{ScoredIter, ScoredMoveList, SearchContext, score},
     send,
 };
 use tinyvec::ArrayVec;
@@ -75,6 +75,35 @@ impl PvTable {
 }
 
 #[derive(Clone)]
+pub struct HistoryHeuristics {
+    table: [[[i16; BOARD_SIZE]; BOARD_SIZE]; 2],
+}
+
+impl HistoryHeuristics {
+    const HISTORY_MAX: i16 = 20_000;
+
+    #[inline(always)]
+    pub fn get(&self, from: Square, to: Square, color: Color) -> i16 {
+        self.table[color as usize][from as usize][to as usize]
+    }
+
+    // gravity formula
+    #[inline(always)]
+    pub fn update(&mut self, color: Color, from: Square, to: Square, bonus: i16) {
+        let clamped_bonus = bonus.clamp(-Self::HISTORY_MAX, -Self::HISTORY_MAX);
+        let entry = &mut self.table[color as usize][from as usize][to as usize];
+
+        *entry = clamped_bonus - *entry * clamped_bonus.abs() / Self::HISTORY_MAX;
+    }
+
+    pub fn new() -> Self {
+        Self {
+            table: [[[0; BOARD_SIZE]; BOARD_SIZE]; 2],
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Searcher {
     // core search
     board: Board,
@@ -97,6 +126,7 @@ pub struct Searcher {
 
     // heuristics
     killers: [[Option<Move>; 2]; Searcher::MAX_PLY],
+    history_heuristic: HistoryHeuristics,
 }
 
 impl Searcher {
@@ -111,8 +141,9 @@ impl Searcher {
         self.history
             .iter()
             .rev()
+            .skip(2) // skip current position
+            .take(self.board.halfmove_clock as usize)
             .step_by(2) // check only positions with same side to move
-            .take(self.board.halfmove_clock as usize / 2)
             .filter(|&&zobrist| zobrist == self.board.zobrist)
             .take(2)
             .count()
@@ -128,8 +159,10 @@ impl Searcher {
 
     #[inline(always)]
     fn push_move(&mut self, mov: Move) -> Undo {
+        let undo = self.board.make_move(mov);
         self.history.push(self.board.zobrist);
-        self.board.make_move(mov)
+
+        undo
     }
 
     #[inline(always)]
@@ -247,13 +280,48 @@ impl Searcher {
         );
     }
 
+    /// this function updates killer moves and history heuristics on beta cut-off
     #[inline(always)]
-    fn update_heuristics(&mut self, ply: usize, mov: Move) {
+    fn update_heuristics(
+        &mut self,
+        depth: usize,
+        ply: usize,
+        mov: Move,
+        scored_list: &ScoredMoveList,
+        move_index: usize,
+    ) {
         let move_type = mov.get_flags().move_type;
         if move_type != MoveType::Capture && move_type != MoveType::EnPassantCapture {
             if self.killers[ply][0] != Some(mov) {
                 self.killers[ply][1] = self.killers[ply][0];
                 self.killers[ply][0] = Some(mov);
+            }
+
+            let bonus = (depth * depth) as i16;
+            let color = self.board.side_to_move;
+
+            self.history_heuristic
+                .update(color, mov.get_from(), mov.get_to(), bonus);
+
+            // apply history maluses
+            // this works becasue the `scored_iter` orders the already seen moves behind
+            // `move_index`, so iterate from 0 to the current one is essentially iterate over the
+            // already seen moves
+            for (quiet_move, _, _) in scored_list.iter().take(move_index) {
+                let quiet_move_type = quiet_move.get_flags().move_type;
+
+                if quiet_move_type == MoveType::Capture
+                    || quiet_move_type == MoveType::EnPassantCapture
+                {
+                    continue;
+                }
+
+                self.history_heuristic.update(
+                    color,
+                    quiet_move.get_from(),
+                    quiet_move.get_to(),
+                    -bonus,
+                );
             }
         }
     }
@@ -274,10 +342,12 @@ impl Searcher {
                 board: &self.board,
                 pv_line: &self.prev_pv_line,
                 killers: &self.killers,
+                history_heuristic: &self.history_heuristic,
                 ply: 0,
             };
 
-            for (number, (mov, _)) in score(&move_list, &search_ctx).scored_iter().enumerate() {
+            let mut scored_moves = score(&move_list, &search_ctx);
+            for (move_index, (mov, _)) in scored_moves.scored_iter().enumerate() {
                 // if we started in ponder mode and now ponder has been turned off, initialize timing here:
                 if self.was_pondering && !self.ponder.load(Ordering::Relaxed) {
                     // reset the worker's clock now that GUI said ponderhit
@@ -301,11 +371,7 @@ impl Searcher {
                 // inline manually to avoid calling `.elapsed()` twice
                 let elapsed = self.time_control.start_time.elapsed();
 
-                if self.stop.load(Ordering::Relaxed)
-                    || self.time_ms.is_some_and(|ms| {
-                        !self.ponder.load(Ordering::Relaxed) && elapsed.as_millis() >= ms as u128
-                    })
-                {
+                if self.stop.load(Ordering::Relaxed) {
                     break;
                 }
 
@@ -313,7 +379,7 @@ impl Searcher {
                     send!(
                         "info depth {current_depth} currmove {} currmovenumber {}",
                         mov.to_uci(),
-                        number + 1,
+                        move_index + 1,
                     );
                     last_info_time = elapsed;
                 }
@@ -331,7 +397,7 @@ impl Searcher {
                         alpha = score;
                     }
                     if alpha >= beta {
-                        self.update_heuristics(0, mov);
+                        self.update_heuristics(0, current_depth, mov, &scored_moves, move_index);
                         self.pop_move(&undo);
                         break;
                     }
@@ -339,11 +405,16 @@ impl Searcher {
                 self.pop_move(&undo);
             }
 
+            let searching_time = self.time_control.start_time.elapsed();
+
             if self.time_to_stop() {
+                if current_depth <= 1 {
+                    self.print_info(searching_time, best_score, current_depth);
+                    best_move = step_best_move;
+                }
                 break;
             }
 
-            let searching_time = self.time_control.start_time.elapsed();
             let pv_line = self.pv_table.get(0);
 
             best_move = step_best_move;
@@ -401,11 +472,13 @@ impl Searcher {
             board: &self.board,
             pv_line: &self.prev_pv_line,
             killers: &self.killers,
+            history_heuristic: &self.history_heuristic,
             ply,
         };
         let mut found_legal_move = false;
 
-        for (mov, _) in score(&gen_color_moves(&self.board), &search_ctx).scored_iter() {
+        let mut scored_moves = score(&gen_color_moves(&self.board), &search_ctx);
+        for (move_index, (mov, _)) in scored_moves.scored_iter().enumerate() {
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
                 self.pop_move(&undo);
@@ -424,7 +497,7 @@ impl Searcher {
                 alpha = score;
             }
             if alpha >= beta {
-                self.update_heuristics(ply, mov);
+                self.update_heuristics(ply, depth, mov, &scored_moves, move_index);
                 return alpha;
             }
             if check_timeout && self.time_to_stop() {
@@ -503,6 +576,7 @@ impl Searcher {
             board: &self.board,
             pv_line: &self.prev_pv_line,
             killers: &self.killers,
+            history_heuristic: &self.history_heuristic,
             ply,
         };
 
@@ -565,6 +639,7 @@ impl Searcher {
             ponder: Arc::new(AtomicBool::new(false)),
 
             killers: [[None; 2]; Searcher::MAX_PLY],
+            history_heuristic: HistoryHeuristics::new(),
         }
     }
 

@@ -1,6 +1,9 @@
 use std::sync::LazyLock;
 
-use crate::{chess::*, engine::search::Searcher};
+use crate::{
+    chess::*,
+    engine::search::{HistoryHeuristics, Searcher},
+};
 use tinyvec::ArrayVec;
 
 pub(crate) type ScoredMoveList = ArrayVec<[(Move, i16, bool); MAX_MOVES]>;
@@ -8,6 +11,7 @@ pub(crate) struct SearchContext<'a> {
     pub board: &'a Board,
     pub pv_line: &'a [Move],
     pub killers: &'a [[Option<Move>; 2]; Searcher::MAX_PLY],
+    pub history_heuristic: &'a HistoryHeuristics,
     pub ply: usize,
 }
 
@@ -166,12 +170,15 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
                 false,
             ),
 
-            // todo: history heuristics
             _ => {
                 let killers = &search_ctx.killers[search_ctx.ply];
                 let score = (killers[0] == Some(mov) || killers[1] == Some(mov))
                     .then_some(MoveBuckets::KILLERS)
-                    .unwrap_or(0);
+                    .unwrap_or(search_ctx.history_heuristic.get(
+                        mov.get_from(),
+                        mov.get_to(),
+                        search_ctx.board.side_to_move,
+                    ));
                 (score, false)
             }
         }

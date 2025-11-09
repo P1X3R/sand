@@ -101,7 +101,7 @@ impl Uci {
                 send!("phase: {}", self.position_board.phase);
                 send!(
                     "static eval: {}",
-                    match self.position_board.side_to_move.toggle() {
+                    match self.position_board.side_to_move {
                         Color::White => self.position_board.evaluate(),
                         Color::Black => -self.position_board.evaluate(),
                     }
@@ -144,8 +144,8 @@ impl Uci {
                     continue; // Silently ignore invalid moves
                 };
 
-                self.position_history.push(self.position_board.zobrist);
                 self.position_board.make_move(mov);
+                self.position_history.push(self.position_board.zobrist);
             }
         }
 
