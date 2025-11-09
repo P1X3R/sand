@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use crate::{chess::*, engine::search::Searcher};
-use std::array::from_fn;
 use tinyvec::ArrayVec;
 
 pub(crate) type ScoredMoveList = ArrayVec<[(Move, i16, bool); MAX_MOVES]>;
@@ -19,6 +18,7 @@ impl MoveBuckets {
 }
 
 static MVV_LVA: LazyLock<[[i16; PIECE_TYPES.len()]; PIECE_TYPES.len() - 1]> = LazyLock::new(|| {
+    use std::array::from_fn;
     from_fn(|victim: usize| {
         from_fn(|attacker: usize| 10 * Board::PIECE_VALUES[victim] - Board::PIECE_VALUES[attacker])
     })
