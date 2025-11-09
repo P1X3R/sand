@@ -2,8 +2,6 @@ use tinyvec::ArrayVec;
 
 use crate::chess::{attacks::magics, attacks::tables, attacks::tables::Offset, *};
 
-pub const MAX_MOVES: usize = 256;
-
 #[inline(always)]
 pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
     debug_assert!(square < BOARD_SIZE as u8);
@@ -210,7 +208,7 @@ fn push_with_promotions(
     move_type: MoveType,
     piece: Piece,
     color: Color,
-    move_list: &mut ArrayVec<[Move; MAX_MOVES]>,
+    move_list: &mut MoveList,
 ) {
     let promotion_rank = match color {
         Color::White => RANKS[7],
@@ -244,8 +242,8 @@ fn push_with_promotions(
 fn gen_moves_by_generator(
     board: &Board,
     generator: fn(Square, Piece, Color, &Board) -> u64,
-) -> ArrayVec<[Move; MAX_MOVES]> {
-    let mut move_list = ArrayVec::<[Move; MAX_MOVES]>::new();
+) -> MoveList {
+    let mut move_list = MoveList::new();
     let color = board.side_to_move;
 
     for piece_type in PIECE_TYPES {
@@ -269,19 +267,18 @@ fn gen_moves_by_generator(
 }
 
 #[inline(always)]
-pub fn gen_color_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
+pub fn gen_color_moves(board: &Board) -> MoveList {
     let mut move_list = gen_moves_by_generator(board, gen_piece_moves);
     move_list.extend(get_castling_moves(board));
     move_list
 }
 
 #[inline(always)]
-pub fn gen_capture_promotion_moves(board: &Board) -> ArrayVec<[Move; MAX_MOVES]> {
+pub fn gen_capture_promotion_moves(board: &Board) -> MoveList {
     gen_moves_by_generator(board, gen_piece_captures_promotions)
 }
 
-#[inline(always)]
-pub fn get_attacker(square: Square, attacker_color: Color, board: &Board) -> u64 {
+pub fn get_attackers(square: Square, attacker_color: Color, board: &Board) -> u64 {
     let occupancy =
         board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
     let attacker_bitboards = board.bitboards[attacker_color as usize];
@@ -309,7 +306,6 @@ pub fn get_attacker(square: Square, attacker_color: Color, board: &Board) -> u64
         | king_attacks
 }
 
-#[inline(always)]
 pub fn is_square_attacked(square: Square, attacker_color: Color, board: &Board) -> bool {
     let occupancy =
         board.occupancies[Color::White as usize] | board.occupancies[Color::Black as usize];
@@ -332,7 +328,6 @@ pub fn is_square_attacked(square: Square, attacker_color: Color, board: &Board) 
         || (tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize]) != 0
 }
 
-#[inline(always)]
 fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     const E1: Square = 4;
     const WHITE_KING_SIDE: Square = E1 + 2;

@@ -1,3 +1,5 @@
+use tinyvec::ArrayVec;
+
 use crate::chess::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,30 +107,7 @@ impl Move {
             )
         }
     }
-
-    pub fn get_move_type(from: Square, to: Square, board: &Board) -> MoveType {
-        let (piece, _) = board.pieces[from as usize];
-        let lands_in_piece = board.pieces[to as usize].0 != Piece::None;
-
-        if piece == Piece::Pawn {
-            if Some(to) == board.en_passant_square && !lands_in_piece {
-                return MoveType::EnPassantCapture;
-            }
-            if to.abs_diff(from) == (BOARD_WIDTH * 2) as u8 {
-                return MoveType::DoublePawnPush;
-            }
-        } else if piece == Piece::King {
-            let diff = to as i8 - from as i8;
-            if diff == 2 {
-                return MoveType::KingSideCastle;
-            } else if diff == -2 {
-                return MoveType::QueenSideCastle;
-            }
-        }
-        if lands_in_piece {
-            return MoveType::Capture;
-        }
-
-        MoveType::Quiet
-    }
 }
+
+pub const MAX_MOVES: usize = 256;
+pub type MoveList = ArrayVec<[Move; MAX_MOVES]>;
