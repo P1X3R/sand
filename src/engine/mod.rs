@@ -1,3 +1,4 @@
 pub mod evaluation;
-pub mod search;
+mod ordering;
+mod search;
 pub mod uci;

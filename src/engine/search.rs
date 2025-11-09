@@ -6,7 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{chess::*, send};
+use crate::{
+    chess::*,
+    engine::ordering::{ScoredIter, SearchContext, score},
+    send,
+};
 use tinyvec::ArrayVec;
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -76,6 +80,7 @@ pub struct Searcher {
     board: Board,
     history: ArrayVec<[u64; 1024]>,
     pv_table: PvTable,
+    prev_pv_line: ArrayVec<[Move; Searcher::MAX_PLY]>,
 
     // search info tracking
     nodes: usize,
@@ -92,11 +97,11 @@ pub struct Searcher {
 }
 
 impl Searcher {
-    const MAX_PLY: usize = 64;
+    pub const MAX_PLY: usize = 64;
     const CHECKMATE_SCORE: i16 = 30_000;
     const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - 2 * Searcher::MAX_PLY as i16;
     const NODE_MASK: usize = 1023;
-    const INF: i16 = 32_000;
+    pub const INF: i16 = 32_000;
 
     #[inline(always)]
     fn is_three_fold_repetition(&self) -> bool {
@@ -251,8 +256,13 @@ impl Searcher {
             let mut step_best_move = best_move;
             let mut best_score = -Searcher::INF;
             let mut last_info_time = Duration::ZERO;
+            let search_ctx = SearchContext {
+                board: &self.board,
+                pv_line: &self.prev_pv_line,
+                ply: 0,
+            };
 
-            for (number, &mov) in move_list.iter().enumerate() {
+            for (number, (mov, _)) in score(&move_list, &search_ctx).scored_iter().enumerate() {
                 // if we started in ponder mode and now ponder has been turned off, initialize timing here:
                 if self.was_pondering && !self.ponder.load(Ordering::Relaxed) {
                     // reset the worker's clock now that GUI said ponderhit
@@ -318,10 +328,12 @@ impl Searcher {
             }
 
             let searching_time = self.time_control.start_time.elapsed();
+            let pv_line = self.pv_table.get(0);
 
             best_move = step_best_move;
-            ponder_move = self.pv_table.get(0).get(1).cloned();
+            ponder_move = pv_line.get(1).cloned();
             self.print_info(searching_time, best_score, current_depth);
+            self.prev_pv_line = pv_line.try_into().unwrap_or_default();
 
             if current_depth >= depth.unwrap_or(Searcher::MAX_PLY) {
                 break;
@@ -369,9 +381,14 @@ impl Searcher {
 
         let mate_score = Searcher::CHECKMATE_SCORE - ply as i16;
         let mut best_score = -Searcher::INF;
+        let search_ctx = SearchContext {
+            board: &self.board,
+            pv_line: &self.prev_pv_line,
+            ply,
+        };
         let mut found_legal_move = false;
 
-        for mov in gen_color_moves(&self.board) {
+        for (mov, _) in score(&gen_color_moves(&self.board), &search_ctx).scored_iter() {
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
                 self.pop_move(&undo);
@@ -464,9 +481,14 @@ impl Searcher {
         } else {
             gen_capture_promotion_moves(&self.board)
         };
+        let search_ctx = SearchContext {
+            board: &self.board,
+            pv_line: &self.prev_pv_line,
+            ply,
+        };
 
         let mut found_legal_move = false;
-        for mov in move_list {
+        for (mov, can_prune_by_see) in score(&move_list, &search_ctx).scored_iter() {
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
                 self.pop_move(&undo);
@@ -474,6 +496,11 @@ impl Searcher {
             }
 
             found_legal_move = true;
+            if can_prune_by_see && !in_check {
+                self.pop_move(&undo);
+                continue;
+            }
+
             let score = -self.quiescence(-beta, -alpha, ply + 1);
             self.pop_move(&undo);
 
@@ -506,6 +533,7 @@ impl Searcher {
             pv_table: PvTable {
                 pv: [ArrayVec::new(); Searcher::MAX_PLY],
             },
+            prev_pv_line: ArrayVec::new(),
 
             nodes: 0,
             seldepth: 0,
