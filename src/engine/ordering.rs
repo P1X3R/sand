@@ -7,13 +7,14 @@ pub(crate) type ScoredMoveList = ArrayVec<[(Move, i16, bool); MAX_MOVES]>;
 pub(crate) struct SearchContext<'a> {
     pub board: &'a Board,
     pub pv_line: &'a [Move],
+    pub killers: &'a [[Option<Move>; 2]; Searcher::MAX_PLY],
     pub ply: usize,
 }
 
 struct MoveBuckets;
 impl MoveBuckets {
     pub const GOOD_CAPTURES_PROMOTIONS: i16 = 10_000;
-    pub const _KILLERS: i16 = 5_000;
+    pub const KILLERS: i16 = 5_000;
     pub const BAD_CAPTURES_PROMOTIONS: i16 = 2_000;
 }
 
@@ -58,13 +59,18 @@ fn consider_x_rays(square: Square, side_to_move: Color, occupancy: u64, board: &
 }
 
 /// inspired from Stockfish implementation
-fn see_ge(from: Square, square: Square, board: &Board, threshold: i16) -> bool {
-    let mut swap = Board::PIECE_VALUES[board.pieces[square as usize].0 as usize] - threshold;
+fn see_ge(
+    (from, initial_attacker): (Square, Piece),
+    (target, initial_victim): (Square, Piece),
+    board: &Board,
+    threshold: i16,
+) -> bool {
+    let mut swap = Board::PIECE_VALUES[initial_victim as usize] - threshold;
     if swap < 0 {
         return false;
     }
 
-    swap = Board::PIECE_VALUES[board.pieces[from as usize].0 as usize] - swap;
+    swap = Board::PIECE_VALUES[initial_attacker as usize] - swap;
     if swap <= 0 {
         return true;
     }
@@ -78,7 +84,7 @@ fn see_ge(from: Square, square: Square, board: &Board, threshold: i16) -> bool {
     let mut occupancy = occupancy ^ bit(from); // remove first attacker
 
     let mut side_to_move = board.side_to_move.toggle();
-    let mut attackers = get_attackers(square, side_to_move, board) & occupancy;
+    let mut attackers = get_attackers(target, side_to_move, board) & occupancy;
     let mut side_has_advantage = true;
 
     while let Some((attacker, attacker_type)) =
@@ -103,7 +109,7 @@ fn see_ge(from: Square, square: Square, board: &Board, threshold: i16) -> bool {
         attackers ^= attacker;
 
         if attacker & may_x_ray != 0 {
-            attackers |= consider_x_rays(square, side_to_move, occupancy, board)
+            attackers |= consider_x_rays(target, side_to_move, occupancy, board)
         }
 
         side_to_move = side_to_move.toggle();
@@ -140,12 +146,16 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
                 let (victim, _) = search_ctx.board.pieces[to];
                 let (attacker, _) = search_ctx.board.pieces[from];
                 let mvv_lva = MVV_LVA[victim as usize][attacker as usize];
-                let (bucket, can_prune_by_see) =
-                    if see_ge(from as Square, to as Square, search_ctx.board, 0) {
-                        (MoveBuckets::GOOD_CAPTURES_PROMOTIONS, false)
-                    } else {
-                        (MoveBuckets::BAD_CAPTURES_PROMOTIONS, true)
-                    };
+                let (bucket, can_prune_by_see) = if see_ge(
+                    (from as Square, attacker),
+                    (to as Square, victim),
+                    search_ctx.board,
+                    0,
+                ) {
+                    (MoveBuckets::GOOD_CAPTURES_PROMOTIONS, false)
+                } else {
+                    (MoveBuckets::BAD_CAPTURES_PROMOTIONS, true)
+                };
 
                 (bucket + mvv_lva, can_prune_by_see)
             }
@@ -156,8 +166,14 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
                 false,
             ),
 
-            // todo: killers & history heuristics
-            _ => (0, false),
+            // todo: history heuristics
+            _ => {
+                let killers = &search_ctx.killers[search_ctx.ply];
+                let score = (killers[0] == Some(mov) || killers[1] == Some(mov))
+                    .then_some(MoveBuckets::KILLERS)
+                    .unwrap_or(0);
+                (score, false)
+            }
         }
     }
 }

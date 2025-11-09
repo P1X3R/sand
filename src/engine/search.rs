@@ -94,6 +94,9 @@ pub struct Searcher {
     // external control
     stop: Arc<AtomicBool>,
     ponder: Arc<AtomicBool>,
+
+    // heuristics
+    killers: [[Option<Move>; 2]; Searcher::MAX_PLY],
 }
 
 impl Searcher {
@@ -244,6 +247,17 @@ impl Searcher {
         );
     }
 
+    #[inline(always)]
+    fn update_heuristics(&mut self, ply: usize, mov: Move) {
+        let move_type = mov.get_flags().move_type;
+        if move_type != MoveType::Capture && move_type != MoveType::EnPassantCapture {
+            if self.killers[ply][0] != Some(mov) {
+                self.killers[ply][1] = self.killers[ply][0];
+                self.killers[ply][0] = Some(mov);
+            }
+        }
+    }
+
     fn iterative_deepening(&mut self, depth: Option<usize>) -> (Move, Option<Move>) {
         let move_list = gen_color_moves(&self.board);
         let mut best_move: Move = move_list[0];
@@ -259,6 +273,7 @@ impl Searcher {
             let search_ctx = SearchContext {
                 board: &self.board,
                 pv_line: &self.prev_pv_line,
+                killers: &self.killers,
                 ply: 0,
             };
 
@@ -316,6 +331,7 @@ impl Searcher {
                         alpha = score;
                     }
                     if alpha >= beta {
+                        self.update_heuristics(0, mov);
                         self.pop_move(&undo);
                         break;
                     }
@@ -384,6 +400,7 @@ impl Searcher {
         let search_ctx = SearchContext {
             board: &self.board,
             pv_line: &self.prev_pv_line,
+            killers: &self.killers,
             ply,
         };
         let mut found_legal_move = false;
@@ -407,6 +424,7 @@ impl Searcher {
                 alpha = score;
             }
             if alpha >= beta {
+                self.update_heuristics(ply, mov);
                 return alpha;
             }
             if check_timeout && self.time_to_stop() {
@@ -484,6 +502,7 @@ impl Searcher {
         let search_ctx = SearchContext {
             board: &self.board,
             pv_line: &self.prev_pv_line,
+            killers: &self.killers,
             ply,
         };
 
@@ -544,6 +563,8 @@ impl Searcher {
 
             stop: Arc::new(AtomicBool::new(false)),
             ponder: Arc::new(AtomicBool::new(false)),
+
+            killers: [[None; 2]; Searcher::MAX_PLY],
         }
     }
 
