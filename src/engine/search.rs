@@ -32,12 +32,10 @@ struct PvTable {
 }
 
 impl PvTable {
-    #[inline(always)]
     fn clear(&mut self, ply: usize) {
         self.pv[ply].clear();
     }
 
-    #[inline(always)]
     fn update(&mut self, ply: usize, mov: Move) {
         // set the best move for this ply
         self.pv[ply].clear();
@@ -52,7 +50,6 @@ impl PvTable {
         }
     }
 
-    #[inline(always)]
     fn get(&self, ply: usize) -> &[Move] {
         &self.pv[ply]
     }
@@ -111,7 +108,6 @@ impl TimeManagement {
         }
     }
 
-    #[inline(always)]
     pub fn is_timeout(&mut self, is_depth_complete: bool) -> bool {
         self.elapsed_clock += 1;
         if self.elapsed_clock >= Self::TIME_CHECKPOINT {
@@ -142,14 +138,12 @@ pub struct AtomicSearchMode {
 }
 
 impl AtomicSearchMode {
-    #[inline(always)]
     pub fn new(mode: SearchMode) -> Self {
         Self {
             inner: AtomicU8::new(mode as u8),
         }
     }
 
-    #[inline(always)]
     fn from_u8(number: u8) -> SearchMode {
         match number {
             0 => SearchMode::Normal,
@@ -160,12 +154,10 @@ impl AtomicSearchMode {
         }
     }
 
-    #[inline(always)]
     pub fn load(&self) -> SearchMode {
         Self::from_u8(self.inner.load(Ordering::Relaxed))
     }
 
-    #[inline(always)]
     pub fn store(&self, mode: SearchMode) {
         self.inner.store(mode as u8, Ordering::Relaxed);
     }
@@ -195,7 +187,6 @@ impl Searcher {
     const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - 2 * Searcher::MAX_PLY as i16;
     pub const INF: i16 = 32_000;
 
-    #[inline(always)]
     fn is_three_fold_repetition(&self) -> bool {
         self.history
             .iter()
@@ -209,14 +200,12 @@ impl Searcher {
             >= 2
     }
 
-    #[inline(always)]
     fn is_draw(&self) -> bool {
         self.board.is_fifty_move()
             || self.is_three_fold_repetition()
             || self.board.is_insufficient_material()
     }
 
-    #[inline(always)]
     fn push_move(&mut self, mov: Move) -> Undo {
         let undo = self.board.make_move(mov);
         self.history.push(self.board.zobrist);
@@ -224,7 +213,6 @@ impl Searcher {
         undo
     }
 
-    #[inline(always)]
     fn pop_move(&mut self, undo: &Undo) {
         self.board.undo_move(undo);
         self.history.pop();
@@ -254,7 +242,6 @@ impl Searcher {
         (best_move, ponder_move)
     }
 
-    #[inline(always)]
     fn time_to_stop(&mut self, is_depth_complete: bool) -> bool {
         let search_mode = self.search_mode.load();
 
@@ -315,7 +302,6 @@ impl Searcher {
     }
 
     /// this function updates killer moves and history heuristics on beta cut-off
-    #[inline(always)]
     fn update_heuristics(
         &mut self,
         depth: usize,
@@ -448,8 +434,6 @@ impl Searcher {
         (best_move, ponder_move)
     }
 
-    /// draw score formula
-    #[inline(always)]
     fn get_draw_score(eval: i16) -> i16 {
         (-eval / 10).clamp(-100, 100)
     }

@@ -10,7 +10,6 @@ pub struct Undo {
 }
 
 impl Board {
-    #[inline(always)]
     fn update_rights_on_rook_change(&mut self, square: Square, color: Color) {
         self.castling_rights &= !(match (square, color) {
             (0, Color::White) => Castling::WQ,  // a1
@@ -23,7 +22,6 @@ impl Board {
 
     /// Returns the square of the pawn captured by an en passant move
     /// `color` is the moving/attacker side's color
-    #[inline(always)]
     fn get_en_passant_target(to: Square, color: Color) -> Square {
         match color {
             Color::White => to - BOARD_WIDTH as Square,
@@ -33,7 +31,6 @@ impl Board {
 
     /// This function doesn't update zobrist based on piece positioning because `toggle_piece`
     /// already does it
-    #[inline(always)]
     fn update_zobrist(&mut self, old_en_passant: Option<Square>, old_rights: u8) {
         self.zobrist ^= *ZOBRIST_SIDE; // Side to move
 
@@ -59,7 +56,6 @@ impl Board {
     ///
     /// # Preconditions
     /// - `mov` must be a legal move in the current position
-    #[inline(always)]
     pub fn make_move(&mut self, mov: Move) -> Undo {
         let from: Square = mov.get_from();
         let to: Square = mov.get_to();
@@ -154,7 +150,6 @@ impl Board {
     ///
     /// # Preconditions
     /// - `undo` from `make_move`
-    #[inline(always)]
     pub fn undo_move(&mut self, undo: &Undo) {
         self.en_passant_square = undo.en_passant_square;
         self.halfmove_clock = undo.halfmove_clock;

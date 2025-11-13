@@ -25,7 +25,6 @@ pub struct MoveFlag {
 pub struct Move(pub u16);
 
 impl Move {
-    #[inline(always)]
     pub fn new(from: Square, to: Square, move_flags: MoveFlag) -> Self {
         debug_assert!(move_flags.move_type != MoveType::Invalid);
         debug_assert!(from < BOARD_SIZE as u8 && to < BOARD_SIZE as u8);
@@ -57,17 +56,14 @@ impl Move {
         Move(from as u16 | to_encoded | move_flags_encoded)
     }
 
-    #[inline(always)]
     pub fn get_from(self) -> Square {
         (self.0 & 0x3f) as Square
     }
 
-    #[inline(always)]
     pub fn get_to(self) -> Square {
         (self.0 >> 6 & 0x3f) as Square
     }
 
-    #[inline(always)]
     pub fn get_flags(self) -> MoveFlag {
         let encoded_flags = (self.0 >> 12 & 0xf) as usize;
         let move_flag = crate::chess::attacks::tables::FLAGS_LUT[encoded_flags];

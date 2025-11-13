@@ -201,13 +201,11 @@ pub struct HistoryHeuristics {
 impl HistoryHeuristics {
     const HISTORY_MAX: i32 = 20_000;
 
-    #[inline(always)]
     pub fn get(&self, from: Square, to: Square, color: Color) -> i16 {
         self.table[color as usize][from as usize][to as usize]
     }
 
     // gravity formula
-    #[inline(always)]
     pub fn update(&mut self, color: Color, from: Square, to: Square, bonus: i32) {
         let clamped_bonus = bonus.clamp(-Self::HISTORY_MAX, Self::HISTORY_MAX) as i32;
         let entry = &mut self.table[color as usize][from as usize][to as usize];

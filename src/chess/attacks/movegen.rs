@@ -2,7 +2,6 @@ use tinyvec::ArrayVec;
 
 use crate::chess::{attacks::magics, attacks::tables, attacks::tables::Offset, *};
 
-#[inline(always)]
 pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
     debug_assert!(square < BOARD_SIZE as u8);
 
@@ -22,7 +21,6 @@ pub fn gen_pawn_pushes(square: Square, occupancy: u64, color: Color) -> u64 {
     }
 }
 
-#[inline(always)]
 fn gen_pawn_captures(square: Square, capturable: u64, color: Color) -> u64 {
     (match color {
         Color::White => tables::WPAWN_ATTACKS[square as usize],
@@ -30,7 +28,6 @@ fn gen_pawn_captures(square: Square, capturable: u64, color: Color) -> u64 {
     }) & capturable
 }
 
-#[inline(always)]
 fn gen_quiet_promotions(square: Square, occupancy: u64, color: Color) -> u64 {
     match color {
         Color::White => {
@@ -108,7 +105,6 @@ pub fn gen_sliding_attacks(square: Square, occupancy: u64, directions: &[Offset]
 }
 
 // this code is textbook magic bitboards
-#[inline(always)]
 pub fn get_bishop_index(square: Square, occupancy: u64) -> usize {
     let magic = &magics::BISHOP_MAGICS[square as usize];
     let magic_index =
@@ -117,7 +113,6 @@ pub fn get_bishop_index(square: Square, occupancy: u64) -> usize {
     magic.offset + magic_index as usize
 }
 
-#[inline(always)]
 pub fn get_rook_index(square: Square, occupancy: u64) -> usize {
     let magic = &magics::ROOK_MAGICS[square as usize];
     let magic_index =
@@ -126,7 +121,6 @@ pub fn get_rook_index(square: Square, occupancy: u64) -> usize {
     magic.offset + magic_index as usize
 }
 
-#[inline(always)]
 fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
     let friendly = board.occupancies[color as usize];
     let enemy = board.occupancies[color.toggle() as usize];
@@ -155,7 +149,6 @@ fn gen_piece_moves(square: Square, piece: Piece, color: Color, board: &Board) ->
     }) & !friendly // you're not supposed to capture your own pieces
 }
 
-#[inline(always)]
 fn gen_piece_captures_promotions(square: Square, piece: Piece, color: Color, board: &Board) -> u64 {
     let friendly = board.occupancies[color as usize];
     let enemy = board.occupancies[color.toggle() as usize];
@@ -181,7 +174,6 @@ fn gen_piece_captures_promotions(square: Square, piece: Piece, color: Color, boa
     }) & enemy // you can capture enemy pieces only
 }
 
-#[inline(always)]
 fn get_move_type(piece: Piece, to: Square, from: Square, board: &Board) -> MoveType {
     let lands_in_piece = board.pieces[to as usize].0 != Piece::None;
 
@@ -201,7 +193,6 @@ fn get_move_type(piece: Piece, to: Square, from: Square, board: &Board) -> MoveT
     MoveType::Quiet
 }
 
-#[inline(always)]
 fn push_with_promotions(
     from: Square,
     to: Square,
@@ -266,14 +257,12 @@ fn gen_moves_by_generator(
     move_list
 }
 
-#[inline(always)]
 pub fn gen_color_moves(board: &Board) -> MoveList {
     let mut move_list = gen_moves_by_generator(board, gen_piece_moves);
     move_list.extend(get_castling_moves(board));
     move_list
 }
 
-#[inline(always)]
 pub fn gen_capture_promotion_moves(board: &Board) -> MoveList {
     gen_moves_by_generator(board, gen_piece_captures_promotions)
 }
@@ -375,7 +364,6 @@ fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
 }
 
 /// The move must be already done in the board for this function to work properly
-#[inline(always)]
 pub fn is_legal_move(mov: Move, board: &Board) -> bool {
     let move_type = mov.get_flags().move_type;
 

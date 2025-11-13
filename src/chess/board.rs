@@ -113,7 +113,6 @@ impl Board {
     /// - If the same piece/color is present, it is removed.
     ///
     /// Updates bitboards, occupancies, Zobrist and evaluation terms accordingly.
-    #[inline(always)]
     pub fn toggle_piece(&mut self, square: Square, piece_type: Piece, color: Color) {
         let square_bit = bit(square);
         let (current_piece, current_color) = self.pieces[square as usize];
@@ -264,7 +263,6 @@ impl Board {
     }
 
     /// Checks for insufficient material draws: KvK, KvN, KvB, and KvNN
-    #[inline(always)]
     pub fn is_insufficient_material(&self) -> bool {
         let (mut pawn_rook_queen, mut bishop, mut knight) = (0u64, 0u64, 0u64);
         for color in 0..2 {
@@ -286,7 +284,6 @@ impl Board {
         either_bare && (have_one_minor || (bishop == 0 && knight.count_ones() <= 2))
     }
 
-    #[inline(always)]
     pub fn is_fifty_move(&self) -> bool {
         self.halfmove_clock >= 100
     }
@@ -336,17 +333,14 @@ pub const RANKS: [u64; BOARD_WIDTH] = [
     0xFF00000000000000,
 ];
 
-#[inline(always)]
 pub fn to_square(rank: i8, file: i8) -> Square {
     ((rank * BOARD_WIDTH as i8) + file) as Square
 }
 
-#[inline(always)]
 pub fn valid_axis(axis: i8) -> bool {
     axis >= 0 && axis < BOARD_WIDTH as i8
 }
 
-#[inline(always)]
 pub fn bit(square: Square) -> u64 {
     1u64 << square
 }
@@ -362,7 +356,6 @@ pub struct BitboardOnesIter {
 impl Iterator for BitboardOnesIter {
     type Item = Square;
 
-    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.bitboard == 0 {
             None
@@ -373,7 +366,6 @@ impl Iterator for BitboardOnesIter {
         }
     }
 
-    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let pop = self.bitboard.count_ones() as usize;
         (pop, Some(pop))
