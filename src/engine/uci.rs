@@ -1,5 +1,5 @@
 use crate::{chess::*, engine::search::*};
-use std::{str::SplitWhitespace, thread::JoinHandle};
+use std::{str::SplitWhitespace, sync::Arc, thread::JoinHandle};
 use tinyvec::ArrayVec;
 
 #[macro_export]
@@ -16,8 +16,8 @@ pub struct Uci {
     position_board: Board,
     position_history: ArrayVec<[u64; 1024]>,
 
-    searcher: Searcher,
     worker: Option<JoinHandle<()>>,
+    search_mode: Arc<AtomicSearchMode>,
 }
 
 fn perft(board: &mut Board, depth: usize) -> u64 {
@@ -61,7 +61,7 @@ fn divide(board: &mut Board, depth: usize) -> u64 {
 }
 
 impl Uci {
-    /// Return if is `quit` command
+    /// return true if is `quit` command
     fn execute_commands(&mut self, tokens: &mut SplitWhitespace) -> bool {
         match tokens.next() {
             Some("uci") => {
@@ -77,7 +77,6 @@ impl Uci {
             Some("ucinewgame") => {
                 self.stop_and_join();
 
-                self.searcher = Searcher::new();
                 self.position_board = Board::new(STARTPOS_FEN).unwrap();
                 self.position_history = ArrayVec::new();
                 self.worker = None;
@@ -88,9 +87,12 @@ impl Uci {
                 }
             }
             Some("go") => self.handle_go(tokens),
-            Some("stop") => self.searcher.stop_search(),
-            Some("ponderhit") => self.searcher.stop_pondering(),
-
+            Some("stop") => self.search_mode.store(SearchMode::Stop),
+            Some("ponderhit") => {
+                if self.search_mode.load() == SearchMode::Ponder {
+                    self.search_mode.store(SearchMode::PonderHit);
+                }
+            }
             Some("quit") => {
                 self.stop_and_join();
                 return true;
@@ -115,7 +117,7 @@ impl Uci {
     }
 
     fn stop_and_join(&mut self) {
-        self.searcher.stop_search();
+        self.search_mode.store(SearchMode::Stop);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -149,15 +151,13 @@ impl Uci {
             }
         }
 
-        self.searcher
-            .copy_pos(&self.position_board, &self.position_history);
         Ok(())
     }
 
     fn handle_go(&mut self, tokens: &mut SplitWhitespace) {
         let mut clock_time = ClockTime::default();
         let mut has_clock_time = false;
-        let mut time_control = TimeControl::default();
+        let mut time_control = TimeControl::Infinite;
 
         while let Some(key) = tokens.next() {
             match key {
@@ -170,8 +170,8 @@ impl Uci {
                     };
 
                     match key {
-                        "movetime" => time_control.move_time = Some(val),
-                        "depth" => time_control.depth = Some(val as usize),
+                        "movetime" => time_control = TimeControl::MoveTime(val),
+                        "depth" => time_control = TimeControl::Depth(val as usize),
                         "wtime" => {
                             has_clock_time = true;
                             clock_time.white_time_ms = val;
@@ -192,21 +192,24 @@ impl Uci {
                         _ => unreachable!(),
                     }
                 }
-                "infinite" => time_control.infinite = true,
-                "ponder" => self.searcher.start_pondering(),
+                "infinite" => time_control = TimeControl::Infinite,
+                "ponder" => self.search_mode.store(SearchMode::Ponder),
                 _ => {}
             }
         }
 
-        time_control.clock_time = has_clock_time.then_some(clock_time);
-        self.searcher.stop_search();
+        if has_clock_time {
+            time_control = TimeControl::ClockTime(clock_time);
+        }
 
-        // Spawn a new searcher thread
-        let mut searcher = self.searcher.clone();
-        searcher.time_control = time_control;
+        let mut searcher = Searcher::new(
+            self.position_board.clone(),
+            self.position_history,
+            &self.search_mode,
+        );
 
         self.worker = Some(std::thread::spawn(move || {
-            let (best_move, ponder_move) = searcher.start_search();
+            let (best_move, ponder_move) = searcher.start_search(time_control);
             if let Some(p) = ponder_move {
                 send!("bestmove {} ponder {}", best_move.to_uci(), p.to_uci());
             } else {
@@ -232,10 +235,11 @@ impl Uci {
 
     pub fn new() -> Uci {
         Uci {
-            searcher: Searcher::new(),
             position_board: Board::new(STARTPOS_FEN).unwrap(),
             position_history: ArrayVec::new(),
+
             worker: None,
+            search_mode: Arc::new(AtomicSearchMode::new(SearchMode::Normal)),
         }
     }
 }
