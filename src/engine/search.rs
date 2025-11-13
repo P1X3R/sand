@@ -7,11 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    chess::*,
-    engine::ordering::{ScoredIter, ScoredMoveList, SearchContext, score},
-    send,
-};
+use crate::{chess::*, engine::ordering::*, send};
 use tinyvec::ArrayVec;
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -59,35 +55,6 @@ impl PvTable {
     #[inline(always)]
     fn get(&self, ply: usize) -> &[Move] {
         &self.pv[ply]
-    }
-}
-
-#[derive(Clone)]
-pub struct HistoryHeuristics {
-    table: [[[i16; BOARD_SIZE]; BOARD_SIZE]; 2],
-}
-
-impl HistoryHeuristics {
-    const HISTORY_MAX: i16 = 20_000;
-
-    #[inline(always)]
-    pub fn get(&self, from: Square, to: Square, color: Color) -> i16 {
-        self.table[color as usize][from as usize][to as usize]
-    }
-
-    // gravity formula
-    #[inline(always)]
-    pub fn update(&mut self, color: Color, from: Square, to: Square, bonus: i16) {
-        let clamped_bonus = bonus.clamp(-Self::HISTORY_MAX, Self::HISTORY_MAX);
-        let entry = &mut self.table[color as usize][from as usize][to as usize];
-
-        *entry = clamped_bonus - *entry * clamped_bonus.abs() / Self::HISTORY_MAX;
-    }
-
-    pub fn new() -> Self {
-        Self {
-            table: [[[0; BOARD_SIZE]; BOARD_SIZE]; 2],
-        }
     }
 }
 
@@ -204,7 +171,6 @@ impl AtomicSearchMode {
     }
 }
 
-#[derive(Clone)]
 pub struct Searcher {
     board: Board,
     history: ArrayVec<[u64; 1024]>, // in zobrist
@@ -365,7 +331,7 @@ impl Searcher {
                 self.killers[ply][0] = Some(mov);
             }
 
-            let bonus = (depth * depth) as i16;
+            let bonus = (depth * depth) as i32;
             let color = self.board.side_to_move;
 
             self.history_heuristic

@@ -1,9 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::{
-    chess::*,
-    engine::search::{HistoryHeuristics, Searcher},
-};
+use crate::{chess::*, engine::search::Searcher};
 use tinyvec::ArrayVec;
 
 pub(crate) type ScoredMoveList = ArrayVec<[(Move, i16, bool); MAX_MOVES]>;
@@ -39,7 +36,7 @@ fn get_least_valuable_attacker(
             board.bitboards[side_to_move as usize][piece_type as usize] & attackers;
         if simulated_attackers != 0 {
             return Some((
-                simulated_attackers & simulated_attackers.wrapping_neg(),
+                simulated_attackers & simulated_attackers.wrapping_neg(), // isolate the lsb
                 piece_type,
             ));
         }
@@ -52,10 +49,12 @@ fn consider_x_rays(square: Square, side_to_move: Color, occupancy: u64, board: &
     use crate::chess::attacks::magics::SLIDING_ATTACKS;
 
     let attacker_bitboards = board.bitboards[side_to_move as usize];
+
     let bishop_rays = SLIDING_ATTACKS[get_bishop_index(square, occupancy)];
+    let rook_rays = SLIDING_ATTACKS[get_rook_index(square, occupancy)];
+
     let bishop_queen_occupancy =
         attacker_bitboards[Piece::Bishop as usize] | attacker_bitboards[Piece::Queen as usize];
-    let rook_rays = SLIDING_ATTACKS[get_rook_index(square, occupancy)];
     let rook_queen_occupancy =
         attacker_bitboards[Piece::Rook as usize] | attacker_bitboards[Piece::Queen as usize];
 
@@ -105,7 +104,7 @@ fn see_ge(
         side_has_advantage = !side_has_advantage;
 
         swap = Board::PIECE_VALUES[attacker_type as usize] - swap;
-        if swap < side_has_advantage as i16 {
+        if swap < (side_has_advantage as i16) {
             break;
         }
 
@@ -195,6 +194,35 @@ pub fn score(move_list: &MoveList, search_ctx: &SearchContext) -> ScoredMoveList
         .collect()
 }
 
+pub struct HistoryHeuristics {
+    table: [[[i16; BOARD_SIZE]; BOARD_SIZE]; 2],
+}
+
+impl HistoryHeuristics {
+    const HISTORY_MAX: i32 = 20_000;
+
+    #[inline(always)]
+    pub fn get(&self, from: Square, to: Square, color: Color) -> i16 {
+        self.table[color as usize][from as usize][to as usize]
+    }
+
+    // gravity formula
+    #[inline(always)]
+    pub fn update(&mut self, color: Color, from: Square, to: Square, bonus: i32) {
+        let clamped_bonus = bonus.clamp(-Self::HISTORY_MAX, Self::HISTORY_MAX) as i32;
+        let entry = &mut self.table[color as usize][from as usize][to as usize];
+        let new = clamped_bonus - (*entry as i32) * clamped_bonus.abs() / Self::HISTORY_MAX;
+
+        *entry = new as i16;
+    }
+
+    pub fn new() -> Self {
+        Self {
+            table: [[[0; BOARD_SIZE]; BOARD_SIZE]; 2],
+        }
+    }
+}
+
 pub struct ScoredMoveIter<'a> {
     scored: &'a mut ScoredMoveList,
     index: usize,
@@ -203,6 +231,7 @@ pub struct ScoredMoveIter<'a> {
 impl<'a> Iterator for ScoredMoveIter<'a> {
     type Item = (Move, bool);
 
+    // selection iteration is intentional; sorting would waste cycles on early cutoffs.
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.scored.len() {
             return None;
