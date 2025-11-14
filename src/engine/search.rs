@@ -326,7 +326,7 @@ impl Searcher {
             // this works becasue the `scored_iter` orders the already seen moves behind
             // `move_index`, so iterate from 0 to the current one is essentially iterate over the
             // already seen moves
-            for (quiet_move, _, _) in scored_list.iter().take(move_index) {
+            for (quiet_move, _) in scored_list.iter().take(move_index) {
                 let quiet_move_type = quiet_move.get_flags().move_type;
 
                 if quiet_move_type == MoveType::Capture
@@ -367,7 +367,7 @@ impl Searcher {
             };
 
             let mut scored_moves = score(&move_list, &search_ctx);
-            for (move_index, (mov, _)) in scored_moves.scored_iter().enumerate() {
+            for (move_index, mov) in scored_moves.scored_iter().enumerate() {
                 if current_depth > 1 && self.time_to_stop(false) {
                     break;
                 }
@@ -471,7 +471,7 @@ impl Searcher {
         let mut found_legal_move = false;
 
         let mut scored_moves = score(&gen_color_moves(&self.board), &search_ctx);
-        for (move_index, (mov, _)) in scored_moves.scored_iter().enumerate() {
+        for (move_index, mov) in scored_moves.scored_iter().enumerate() {
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
                 self.pop_move(&undo);
@@ -573,7 +573,9 @@ impl Searcher {
         };
 
         let mut found_legal_move = false;
-        for (mov, can_prune_by_see) in score(&move_list, &search_ctx).scored_iter() {
+        for mov in score(&move_list, &search_ctx).scored_iter() {
+            let can_prune = !in_check && can_prune_by_see(mov, &self.board);
+
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
                 self.pop_move(&undo);
@@ -581,7 +583,7 @@ impl Searcher {
             }
 
             found_legal_move = true;
-            if can_prune_by_see && !in_check {
+            if can_prune {
                 self.pop_move(&undo);
                 continue;
             }

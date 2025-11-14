@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::{chess::*, engine::search::Searcher};
 use tinyvec::ArrayVec;
 
-pub(crate) type ScoredMoveList = ArrayVec<[(Move, i16, bool); MAX_MOVES]>;
+pub(crate) type ScoredMoveList = ArrayVec<[(Move, i16); MAX_MOVES]>;
 pub(crate) struct SearchContext<'a> {
     pub board: &'a Board,
     pub pv_line: &'a [Move],
@@ -14,9 +14,9 @@ pub(crate) struct SearchContext<'a> {
 
 struct MoveBuckets;
 impl MoveBuckets {
-    pub const GOOD_CAPTURES_PROMOTIONS: i16 = 10_000;
+    pub const CAPTURES_PROMOTIONS: i16 = 10_000;
     pub const KILLERS: i16 = 5_000;
-    pub const BAD_CAPTURES_PROMOTIONS: i16 = 2_000;
+    pub const UNDER_PROMOTIONS: i16 = 2_000;
 }
 
 // subtract the king because `Board::PIECE_VALUES[Piece::KING as usize] = 20000`, just to avoid
@@ -68,6 +68,25 @@ fn consider_x_rays(square: Square, side_to_move: Color, occupancy: u64, board: &
         attacker_bitboards[Piece::Rook as usize] | attacker_bitboards[Piece::Queen as usize];
 
     ((bishop_rays & bishop_queen_occupancy) | (rook_rays & rook_queen_occupancy)) & occupancy
+}
+
+pub fn can_prune_by_see(mov: Move, board: &Board) -> bool {
+    let flags = mov.get_flags();
+    if flags.move_type != MoveType::Capture && flags.move_type != MoveType::EnPassantCapture {
+        return false; // don't prune non-captures by SEE
+    }
+
+    let from: Square = mov.get_from();
+    let to: Square = mov.get_to();
+    let (victim, _): (Piece, Color) = board.pieces[to as usize];
+    let (attacker, _): (Piece, Color) = board.pieces[from as usize];
+    let attacker = if flags.promotion != Piece::None {
+        flags.promotion
+    } else {
+        attacker
+    };
+
+    !see_ge((from, attacker), (to, victim), board, 0)
 }
 
 /// inspired from Stockfish implementation
@@ -130,9 +149,9 @@ fn see_ge(
     side_has_advantage
 }
 
-fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
+fn score_move(mov: Move, search_ctx: &SearchContext) -> i16 {
     if search_ctx.pv_line.get(search_ctx.ply) == Some(&mov) {
-        return (Searcher::INF, false);
+        return Searcher::INF;
     }
 
     let flags = mov.get_flags();
@@ -141,13 +160,8 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
     if flags.promotion != Piece::None {
         let promoted_value = Board::PIECE_VALUES[flags.promotion as usize];
         return match flags.promotion {
-            Piece::Queen | Piece::Knight => (
-                MoveBuckets::GOOD_CAPTURES_PROMOTIONS + promoted_value,
-                false,
-            ),
-            Piece::Bishop | Piece::Rook => {
-                (MoveBuckets::BAD_CAPTURES_PROMOTIONS + promoted_value, true)
-            }
+            Piece::Queen | Piece::Knight => MoveBuckets::CAPTURES_PROMOTIONS + promoted_value,
+            Piece::Bishop | Piece::Rook => MoveBuckets::UNDER_PROMOTIONS + promoted_value,
             _ => unreachable!(),
         };
     } else {
@@ -157,32 +171,20 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
                 let to = mov.get_to() as usize;
                 let (victim, _) = search_ctx.board.pieces[to];
                 let (attacker, _) = search_ctx.board.pieces[from];
-                let mvv_lva = MVV_LVA[victim as usize][attacker as usize];
-                let (bucket, can_prune_by_see) = if see_ge(
-                    (from as Square, attacker),
-                    (to as Square, victim),
-                    search_ctx.board,
-                    0,
-                ) {
-                    (MoveBuckets::GOOD_CAPTURES_PROMOTIONS, false)
-                } else {
-                    (MoveBuckets::BAD_CAPTURES_PROMOTIONS, true)
-                };
 
-                (bucket + mvv_lva, can_prune_by_see)
+                MVV_LVA[victim as usize][attacker as usize]
             }
 
-            MoveType::EnPassantCapture => (
-                MoveBuckets::GOOD_CAPTURES_PROMOTIONS
-                    + MVV_LVA[Piece::Pawn as usize][Piece::Pawn as usize],
-                false,
-            ),
+            MoveType::EnPassantCapture => {
+                MoveBuckets::CAPTURES_PROMOTIONS
+                    + MVV_LVA[Piece::Pawn as usize][Piece::Pawn as usize]
+            }
 
             _ => {
                 let killers = &search_ctx.killers[search_ctx.ply];
 
-                let score = if Some(mov) == killers[0] {
-                    MoveBuckets::KILLERS + 1 // give a slight advantage
+                if Some(mov) == killers[0] {
+                    MoveBuckets::KILLERS + 1 // give a small advantage
                 } else if Some(mov) == killers[1] {
                     MoveBuckets::KILLERS
                 } else {
@@ -191,9 +193,7 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
                         mov.get_to(),
                         search_ctx.board.side_to_move,
                     )
-                };
-
-                (score, false)
+                }
             }
         }
     }
@@ -203,8 +203,8 @@ pub fn score(move_list: &MoveList, search_ctx: &SearchContext) -> ScoredMoveList
     move_list
         .iter()
         .map(|&mov| {
-            let (score, can_prune_by_see) = score_move(mov, search_ctx);
-            (mov, score, can_prune_by_see)
+            let score = score_move(mov, search_ctx);
+            (mov, score)
         })
         .collect()
 }
@@ -242,7 +242,7 @@ pub struct ScoredMoveIter<'a> {
 }
 
 impl<'a> Iterator for ScoredMoveIter<'a> {
-    type Item = (Move, bool);
+    type Item = Move;
 
     // selection iteration is intentional; sorting would waste cycles on early cutoffs.
     fn next(&mut self) -> Option<Self::Item> {
@@ -259,9 +259,9 @@ impl<'a> Iterator for ScoredMoveIter<'a> {
         }
 
         self.scored.swap(self.index, best_index);
-        let (mov, _, can_prune_by_see) = self.scored[self.index];
+        let (mov, _) = self.scored[self.index];
         self.index += 1;
-        Some((mov, can_prune_by_see))
+        Some(mov)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

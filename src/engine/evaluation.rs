@@ -16,7 +16,8 @@ impl SubAssign for W {
 }
 
 impl Board {
-    pub const PIECE_VALUES: [i16; PIECE_TYPES.len()] = [100, 320, 330, 500, 900, 20000];
+    // len is piece types and nothing
+    pub const PIECE_VALUES: [i16; PIECE_TYPES.len() + 1] = [100, 320, 330, 500, 900, 20000, 0];
     pub const PHASE_VALUE: [usize; PIECE_TYPES.len()] = [0, 1, 1, 2, 4, 0];
     const TOTAL_PHASE: usize = Board::PHASE_VALUE[Piece::Pawn as usize] * 16
         + Board::PHASE_VALUE[Piece::Knight as usize] * 4
