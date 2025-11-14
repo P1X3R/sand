@@ -190,7 +190,6 @@ impl Searcher {
         self.history
             .iter()
             .rev()
-            .skip(2) // skip current position
             .take(self.board.halfmove_clock as usize)
             .step_by(2) // check only positions with same side to move
             .filter(|&&zobrist| zobrist == self.board.zobrist)
@@ -358,15 +357,8 @@ impl Searcher {
             let mut step_best_move = best_move;
             let mut best_score = -Searcher::INF;
             let mut last_info_time = Duration::ZERO;
-            let search_ctx = SearchContext {
-                board: &self.board,
-                pv_line: &self.prev_pv_line,
-                killers: &self.killers,
-                history_heuristic: &self.history_heuristic,
-                ply: 0,
-            };
 
-            let mut scored_moves = score(&move_list, &search_ctx);
+            let mut scored_moves = score(&move_list, &self.ctx(0));
             for (move_index, mov) in scored_moves.scored_iter().enumerate() {
                 if current_depth > 1 && self.time_to_stop(false) {
                     break;
@@ -461,16 +453,9 @@ impl Searcher {
 
         let mate_score = Searcher::CHECKMATE_SCORE - ply as i16;
         let mut best_score = -Searcher::INF;
-        let search_ctx = SearchContext {
-            board: &self.board,
-            pv_line: &self.prev_pv_line,
-            killers: &self.killers,
-            history_heuristic: &self.history_heuristic,
-            ply,
-        };
         let mut found_legal_move = false;
 
-        let mut scored_moves = score(&gen_color_moves(&self.board), &search_ctx);
+        let mut scored_moves = score(&gen_color_moves(&self.board), &self.ctx(ply));
         for (move_index, mov) in scored_moves.scored_iter().enumerate() {
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
@@ -564,16 +549,9 @@ impl Searcher {
         } else {
             gen_capture_promotion_moves(&self.board)
         };
-        let search_ctx = SearchContext {
-            board: &self.board,
-            pv_line: &self.prev_pv_line,
-            killers: &self.killers,
-            history_heuristic: &self.history_heuristic,
-            ply,
-        };
 
         let mut found_legal_move = false;
-        for mov in score(&move_list, &search_ctx).scored_iter() {
+        for mov in score(&move_list, &self.ctx(ply)).scored_iter() {
             let can_prune = !in_check && can_prune_by_see(mov, &self.board);
 
             let undo = self.push_move(mov);
@@ -635,6 +613,17 @@ impl Searcher {
 
             killers: [[None; 2]; Searcher::MAX_PLY],
             history_heuristic: HistoryHeuristics::new(),
+        }
+    }
+
+    #[inline(always)]
+    fn ctx(&self, ply: usize) -> SearchContext<'_> {
+        SearchContext {
+            board: &self.board,
+            pv_line: &self.prev_pv_line,
+            killers: &self.killers,
+            history_heuristic: &self.history_heuristic,
+            ply,
         }
     }
 }
