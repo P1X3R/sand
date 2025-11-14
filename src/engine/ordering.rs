@@ -19,6 +19,8 @@ impl MoveBuckets {
     pub const BAD_CAPTURES_PROMOTIONS: i16 = 2_000;
 }
 
+// subtract the king because `Board::PIECE_VALUES[Piece::KING as usize] = 20000`, just to avoid
+// overflow. Can't capture king anyways
 static MVV_LVA: LazyLock<[[i16; PIECE_TYPES.len()]; PIECE_TYPES.len() - 1]> = LazyLock::new(|| {
     use std::array::from_fn;
     from_fn(|victim: usize| {
@@ -31,7 +33,14 @@ fn get_least_valuable_attacker(
     board: &Board,
     side_to_move: Color,
 ) -> Option<(u64, Piece)> {
-    for piece_type in PIECE_TYPES {
+    for piece_type in [
+        Piece::Pawn,
+        Piece::Knight,
+        Piece::Bishop,
+        Piece::Rook,
+        Piece::Queen,
+        Piece::King,
+    ] {
         let simulated_attackers =
             board.bitboards[side_to_move as usize][piece_type as usize] & attackers;
         if simulated_attackers != 0 {
@@ -132,11 +141,11 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
     if flags.promotion != Piece::None {
         let promoted_value = Board::PIECE_VALUES[flags.promotion as usize];
         return match flags.promotion {
-            Piece::Queen => (
+            Piece::Queen | Piece::Knight => (
                 MoveBuckets::GOOD_CAPTURES_PROMOTIONS + promoted_value,
                 false,
             ),
-            Piece::Knight | Piece::Bishop | Piece::Rook => {
+            Piece::Bishop | Piece::Rook => {
                 (MoveBuckets::BAD_CAPTURES_PROMOTIONS + promoted_value, true)
             }
             _ => unreachable!(),
@@ -171,13 +180,19 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> (i16, bool) {
 
             _ => {
                 let killers = &search_ctx.killers[search_ctx.ply];
-                let score = (killers[0] == Some(mov) || killers[1] == Some(mov))
-                    .then_some(MoveBuckets::KILLERS)
-                    .unwrap_or(search_ctx.history_heuristic.get(
+
+                let score = if Some(mov) == killers[0] {
+                    MoveBuckets::KILLERS + 1 // give a slight advantage
+                } else if Some(mov) == killers[1] {
+                    MoveBuckets::KILLERS
+                } else {
+                    search_ctx.history_heuristic.get(
                         mov.get_from(),
                         mov.get_to(),
                         search_ctx.board.side_to_move,
-                    ));
+                    )
+                };
+
                 (score, false)
             }
         }
