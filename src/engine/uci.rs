@@ -14,50 +14,10 @@ macro_rules! send {
 pub struct Uci {
     // canonical position & history used when parsing `position`
     position_board: Board,
-    position_history: ArrayVec<[u64; 1024]>,
+    position_history: ZobristHistory,
 
     worker: Option<JoinHandle<()>>,
     search_mode: Arc<AtomicSearchMode>,
-}
-
-fn perft(board: &mut Board, depth: usize) -> u64 {
-    if depth == 0 {
-        return 1u64;
-    }
-
-    let mut nodes = 0u64;
-
-    for mov in gen_color_moves(board) {
-        let undo = board.make_move(mov);
-        if is_legal_move(mov, board) {
-            debug_assert_eq!(board.zobrist, board.calculate_zobrist());
-            nodes += perft(board, depth - 1);
-        }
-        board.undo_move(&undo);
-    }
-
-    nodes
-}
-
-fn divide(board: &mut Board, depth: usize) -> u64 {
-    if depth == 0 {
-        return 1u64;
-    }
-
-    let mut nodes = 0u64;
-
-    for mov in gen_color_moves(board) {
-        let undo = board.make_move(mov);
-        if is_legal_move(mov, board) {
-            debug_assert_eq!(board.zobrist, board.calculate_zobrist());
-            let subtree_nodes = perft(board, depth - 1);
-            nodes += subtree_nodes;
-            send!("{}: {}", mov.to_uci(), subtree_nodes);
-        }
-        board.undo_move(&undo);
-    }
-
-    nodes
 }
 
 impl Uci {
@@ -182,13 +142,6 @@ impl Uci {
                         }
                         "winc" => clock_time.white_increment_ms = val,
                         "binc" => clock_time.black_increment_ms = val,
-                        "perft" => {
-                            send!(
-                                "Nodes searched: {}",
-                                divide(&mut self.position_board, val as usize)
-                            );
-                            return; // intentional, perft must not search
-                        }
                         _ => unreachable!(),
                     }
                 }
@@ -224,7 +177,12 @@ impl Uci {
 
         loop {
             input.clear();
-            if stdin.read_line(&mut input).is_err() {
+            let n = match stdin.read_line(&mut input) {
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            if n == 0 {
+                // EOF -> parent closed stdin (communicate finished)
                 break;
             }
             if self.execute_commands(&mut input.split_whitespace()) {

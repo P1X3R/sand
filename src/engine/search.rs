@@ -25,9 +25,11 @@ pub enum TimeControl {
     Infinite,
 }
 
+type PvLine = ArrayVec<[Move; Searcher::MAX_PLY]>;
+
 #[derive(Clone)]
 struct PvTable {
-    pv: [ArrayVec<[Move; Searcher::MAX_PLY]>; Searcher::MAX_PLY],
+    pv: [PvLine; Searcher::MAX_PLY],
 }
 
 impl PvTable {
@@ -162,11 +164,13 @@ impl AtomicSearchMode {
     }
 }
 
+pub type ZobristHistory = ArrayVec<[u64; 1024]>;
+
 pub struct Searcher {
     board: Board,
-    history: ArrayVec<[u64; 1024]>, // in zobrist
+    history: ZobristHistory,
     pv_table: PvTable,
-    prev_pv_line: ArrayVec<[Move; Searcher::MAX_PLY]>,
+    prev_pv: PvLine,
 
     nodes: usize,
     seldepth: usize,
@@ -412,7 +416,7 @@ impl Searcher {
             best_move = step_best_move;
             ponder_move = pv_line.get(1).cloned();
             self.print_info(searching_time, best_score, current_depth);
-            self.prev_pv_line = pv_line.try_into().unwrap_or_default();
+            self.prev_pv = pv_line.try_into().unwrap_or_default();
 
             if current_depth >= depth.unwrap_or(Searcher::MAX_PLY) {
                 break;
@@ -593,16 +597,16 @@ impl Searcher {
 
     pub fn new(
         board: Board,
-        history: ArrayVec<[u64; 1024]>,
+        history: ZobristHistory,
         search_mode: &Arc<AtomicSearchMode>,
     ) -> Searcher {
         Searcher {
             board,
             history,
             pv_table: PvTable {
-                pv: [ArrayVec::new(); Searcher::MAX_PLY],
+                pv: [PvLine::new(); Searcher::MAX_PLY],
             },
-            prev_pv_line: ArrayVec::new(),
+            prev_pv: PvLine::new(),
 
             nodes: 0,
             seldepth: 0,
@@ -620,7 +624,7 @@ impl Searcher {
     fn ctx(&self, ply: usize) -> SearchContext<'_> {
         SearchContext {
             board: &self.board,
-            pv_line: &self.prev_pv_line,
+            pv_line: &self.prev_pv,
             killers: &self.killers,
             history_heuristic: &self.history_heuristic,
             ply,
