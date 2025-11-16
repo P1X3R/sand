@@ -383,7 +383,11 @@ impl Searcher {
 
                 let undo = self.push_move(mov);
                 if is_legal_move(mov, &self.board) {
-                    let score = -self.search(-beta, -alpha, current_depth - 1, 1);
+                    // the side to move is not toggled here because it's already toggled by
+                    // `push_move`
+                    let gives_check = is_king_attcked(self.board.side_to_move, &self.board);
+
+                    let score = -self.search(-beta, -alpha, current_depth - 1, 1, gives_check);
 
                     if score > best_score {
                         step_best_move = mov;
@@ -448,9 +452,16 @@ impl Searcher {
     }
 
     /// in centipawn
-    fn search(&mut self, mut alpha: i16, beta: i16, depth: usize, ply: usize) -> i16 {
+    fn search(
+        &mut self,
+        mut alpha: i16,
+        beta: i16,
+        depth: usize,
+        ply: usize,
+        in_check: bool,
+    ) -> i16 {
         if depth == 0 {
-            return self.quiescence(alpha, beta, ply);
+            return self.quiescence(alpha, beta, ply, in_check);
         }
 
         self.nodes += 1;
@@ -486,7 +497,8 @@ impl Searcher {
             }
 
             found_legal_move = true;
-            let score = -self.search(-beta, -alpha, depth - 1, ply + 1);
+            let gives_check = is_king_attcked(self.board.side_to_move, &self.board);
+            let score = -self.search(-beta, -alpha, depth - 1, ply + 1, gives_check);
             self.pop_move(&undo);
 
             if score > best_score {
@@ -509,9 +521,6 @@ impl Searcher {
             best_score
         } else {
             self.pv_table.clear(ply);
-            let king_square = self.board.bitboards[color as usize][Piece::King as usize]
-                .trailing_zeros() as Square;
-            let in_check = is_square_attacked(king_square, color.toggle(), &self.board);
 
             if in_check {
                 -max_mate
@@ -521,7 +530,7 @@ impl Searcher {
         }
     }
 
-    fn quiescence(&mut self, mut alpha: i16, beta: i16, ply: usize) -> i16 {
+    fn quiescence(&mut self, mut alpha: i16, beta: i16, ply: usize, in_check: bool) -> i16 {
         self.nodes += 1;
         if ply > self.seldepth {
             self.seldepth = ply;
@@ -563,11 +572,6 @@ impl Searcher {
         }
 
         let max_mate = Searcher::CHECKMATE_SCORE - ply as i16;
-        let in_check = is_square_attacked(
-            self.board.bitboards[color as usize][Piece::King as usize].trailing_zeros() as Square,
-            color.toggle(),
-            &self.board,
-        );
 
         // if in check we must generate all evasions (not only captures)
         let move_list = if in_check {
@@ -586,13 +590,15 @@ impl Searcher {
                 continue;
             }
 
+            let gives_check = is_king_attcked(self.board.side_to_move, &self.board);
+
             found_legal_move = true;
-            if can_prune {
+            if can_prune && !gives_check {
                 self.pop_move(&undo);
                 continue;
             }
 
-            let score = -self.quiescence(-beta, -alpha, ply + 1);
+            let score = -self.quiescence(-beta, -alpha, ply + 1, gives_check);
             self.pop_move(&undo);
 
             if score > best_score {

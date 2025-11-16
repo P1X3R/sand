@@ -318,6 +318,14 @@ pub fn is_square_attacked(square: Square, attacker_color: Color, board: &Board) 
         || (tables::KING_ATTACKS[square as usize] & attacker_bitboards[Piece::King as usize]) != 0
 }
 
+pub fn is_king_attcked(king_color: Color, board: &Board) -> bool {
+    is_square_attacked(
+        board.bitboards[king_color as usize][Piece::King as usize].trailing_zeros() as Square,
+        king_color.toggle(),
+        &board,
+    )
+}
+
 fn get_castling_moves(board: &Board) -> ArrayVec<[Move; 2]> {
     const E1: Square = 4;
     const WHITE_KING_SIDE: Square = E1 + 2;
@@ -404,10 +412,6 @@ pub fn is_legal_move(mov: Move, board: &Board) -> bool {
                 .iter()
                 .all(|&square| !is_square_attacked(square, color.toggle(), board))
     } else {
-        !is_square_attacked(
-            king_bitboard.trailing_zeros() as Square,
-            color.toggle(),
-            board,
-        )
+        !is_king_attcked(color, board)
     }
 }
