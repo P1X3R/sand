@@ -70,10 +70,10 @@ On my overpowered Intel Pentium Silver N5030 it achieves:
 
 ## ELO
 
-Somewhere between a distracted 1200 human and a hyper-caffeinated 1800 Lichess bot.
+Sand was tested against Maia 1500 at blitz time control (`tc=60+0.5`) over 400 games (200 as White, 200 as Black) using the **Unbalanced Human Openings (UHO 2022)**.  
 
-> [!NOTE]
-> More testing required.
+- Observed draw rate: ~10.5% (anti-draw openings).  
+- Sand scored **1857 ± 33 ELO** assuming Maia is exactly 1500 at this time control.  
 
 ## License
 
