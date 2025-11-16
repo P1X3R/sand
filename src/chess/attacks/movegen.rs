@@ -157,21 +157,22 @@ fn gen_piece_captures_promotions(square: Square, piece: Piece, color: Color, boa
     debug_assert!(board.pieces[square as usize] == (piece, color));
     debug_assert!(friendly & bit(square) != 0);
 
-    (match piece {
+    match piece {
         Piece::Pawn => {
             gen_pawn_captures(square, enemy, color)
                 | gen_quiet_promotions(square, occupancy_all, color)
         }
-        Piece::Knight => tables::KNIGHT_ATTACKS[square as usize],
-        Piece::Bishop => magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)],
-        Piece::Rook => magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)],
+        Piece::Knight => tables::KNIGHT_ATTACKS[square as usize] & enemy,
+        Piece::Bishop => magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)] & enemy,
+        Piece::Rook => magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)] & enemy,
         Piece::Queen => {
-            magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)]
-                | magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)]
+            (magics::SLIDING_ATTACKS[get_bishop_index(square, occupancy_all)]
+                | magics::SLIDING_ATTACKS[get_rook_index(square, occupancy_all)])
+                & enemy
         }
-        Piece::King => tables::KING_ATTACKS[square as usize],
+        Piece::King => tables::KING_ATTACKS[square as usize] & enemy,
         Piece::None => unreachable!("tried to generate moves for an empty square"),
-    }) & enemy // you can capture enemy pieces only
+    }
 }
 
 fn get_move_type(piece: Piece, to: Square, from: Square, board: &Board) -> MoveType {
