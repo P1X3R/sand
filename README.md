@@ -23,6 +23,7 @@ A UCI-compliant chess engine in the alpha-beta framework and a major source of p
         - History maluses
 - Selectivity:
     * SEE pruning (quiescence only)
+    * Mate distance pruning
     * Delta pruning
 
 ### Evaluation
