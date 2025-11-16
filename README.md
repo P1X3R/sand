@@ -41,7 +41,7 @@ Specify the `--bin` because it also has other binaries (like `perft_test` and `f
 ## Usage
 
 - To run the engine, go to `target/release` and run `./sand`.
-- To run a perft test you compile with `--bin perft_test` and run `./target/release/perft_test <edp test suite> <depth> <hash table size in mb>`
+- To run a perft test you compile with `--bin perft_test` and run `./target/release/perft_test <epd test suite> <depth> <hash table size in mb>`
 - To recompute the magics (if you dare) just run `cargo r --bin find_magics -r` and copy-paste to the file `src/chess/attacks/magics.rs`
 
 ## UCI Compatibility
