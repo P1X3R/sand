@@ -53,7 +53,7 @@ Specify the `--bin` because it also has other binaries (like `perft_test` and `f
 
 ### Unsupported
 
-- `go mate`
+- `go mate` and `go nodes`
 - Options
 
 ## Known issues
