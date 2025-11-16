@@ -433,6 +433,20 @@ impl Searcher {
         (-eval / 10).clamp(-100, 100)
     }
 
+    fn mate_distance_pruning(ply: usize, alpha: i16, beta: i16) -> Option<i16> {
+        let max_mate = Searcher::CHECKMATE_SCORE - ply as i16;
+        let min_mate = -Searcher::CHECKMATE_SCORE + ply as i16;
+
+        if alpha >= max_mate {
+            return Some(alpha);
+        }
+        if beta <= min_mate {
+            return Some(beta);
+        }
+
+        None
+    }
+
     /// in centipawn
     fn search(&mut self, mut alpha: i16, beta: i16, depth: usize, ply: usize) -> i16 {
         if depth == 0 {
@@ -444,7 +458,12 @@ impl Searcher {
             self.seldepth = ply;
         }
 
+        if let Some(score) = Searcher::mate_distance_pruning(ply, alpha, beta) {
+            return score;
+        }
+
         let color = self.board.side_to_move;
+        let max_mate = Searcher::CHECKMATE_SCORE - ply as i16;
         let static_eval = match color {
             Color::White => self.board.evaluate(),
             Color::Black => -self.board.evaluate(),
@@ -455,7 +474,6 @@ impl Searcher {
             return Searcher::get_draw_score(static_eval);
         }
 
-        let mate_score = Searcher::CHECKMATE_SCORE - ply as i16;
         let mut best_score = -Searcher::INF;
         let mut found_legal_move = false;
 
@@ -496,7 +514,7 @@ impl Searcher {
             let in_check = is_square_attacked(king_square, color.toggle(), &self.board);
 
             if in_check {
-                -mate_score
+                -max_mate
             } else {
                 Searcher::get_draw_score(static_eval) // stalemate
             }
@@ -507,6 +525,10 @@ impl Searcher {
         self.nodes += 1;
         if ply > self.seldepth {
             self.seldepth = ply;
+        }
+
+        if let Some(score) = Searcher::mate_distance_pruning(ply, alpha, beta) {
+            return score;
         }
 
         let color = self.board.side_to_move;
@@ -536,11 +558,11 @@ impl Searcher {
 
         // delta pruning
         const DELTA_MARGIN: i16 = 75;
-        if best_score + Board::PIECE_VALUES[Piece::Queen as usize] + DELTA_MARGIN < alpha {
+        if static_eval + Board::PIECE_VALUES[Piece::Queen as usize] + DELTA_MARGIN < alpha {
             return alpha;
         }
 
-        let mate_score = Searcher::CHECKMATE_SCORE - ply as i16;
+        let max_mate = Searcher::CHECKMATE_SCORE - ply as i16;
         let in_check = is_square_attacked(
             self.board.bitboards[color as usize][Piece::King as usize].trailing_zeros() as Square,
             color.toggle(),
@@ -588,7 +610,7 @@ impl Searcher {
             best_score
         } else {
             if in_check {
-                -mate_score
+                -max_mate
             } else {
                 best_score // if no captures found: stand-pat
             }
