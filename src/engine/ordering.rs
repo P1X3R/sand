@@ -1,4 +1,10 @@
-use std::sync::LazyLock;
+use std::{
+    array,
+    sync::{
+        LazyLock,
+        atomic::{AtomicI16, Ordering},
+    },
+};
 
 use crate::{chess::*, engine::search::Searcher};
 use tinyvec::ArrayVec;
@@ -9,6 +15,7 @@ pub(crate) struct SearchContext<'a> {
     pub pv_line: &'a [Move],
     pub killers: &'a [[Option<Move>; 2]; Searcher::MAX_PLY],
     pub history_heuristic: &'a HistoryHeuristics,
+    pub hash_move: Option<Move>,
     pub ply: usize,
 }
 
@@ -153,6 +160,9 @@ fn score_move(mov: Move, search_ctx: &SearchContext) -> i16 {
     if search_ctx.pv_line.get(search_ctx.ply) == Some(&mov) {
         return Searcher::INF;
     }
+    if search_ctx.hash_move == Some(mov) {
+        return Searcher::INF - 1;
+    }
 
     let flags = mov.get_flags();
 
@@ -210,28 +220,31 @@ pub fn score(move_list: &MoveList, search_ctx: &SearchContext) -> ScoredMoveList
 }
 
 pub struct HistoryHeuristics {
-    table: [[[i16; BOARD_SIZE]; BOARD_SIZE]; 2],
+    table: [[[AtomicI16; BOARD_SIZE]; BOARD_SIZE]; 2],
 }
 
 impl HistoryHeuristics {
     const HISTORY_MAX: i32 = 20_000;
 
     pub fn get(&self, from: Square, to: Square, color: Color) -> i16 {
-        self.table[color as usize][from as usize][to as usize]
+        self.table[color as usize][from as usize][to as usize].load(Ordering::Relaxed)
     }
 
     // gravity formula
-    pub fn update(&mut self, color: Color, from: Square, to: Square, bonus: i32) {
+    pub fn update(&self, color: Color, from: Square, to: Square, bonus: i32) {
         let clamped_bonus = bonus.clamp(-Self::HISTORY_MAX, Self::HISTORY_MAX) as i32;
-        let entry = &mut self.table[color as usize][from as usize][to as usize];
-        let new = clamped_bonus - (*entry as i32) * clamped_bonus.abs() / Self::HISTORY_MAX;
 
-        *entry = new as i16;
+        self.table[color as usize][from as usize][to as usize]
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                let new = clamped_bonus - (old as i32) * clamped_bonus.abs() / Self::HISTORY_MAX;
+                Some(new as i16)
+            })
+            .ok();
     }
 
     pub fn new() -> Self {
         Self {
-            table: [[[0; BOARD_SIZE]; BOARD_SIZE]; 2],
+            table: array::from_fn(|_| array::from_fn(|_| array::from_fn(|_| AtomicI16::new(0)))),
         }
     }
 }

@@ -1,4 +1,7 @@
-use crate::{chess::*, engine::search::*};
+use crate::{
+    chess::*,
+    engine::{ordering::HistoryHeuristics, search::*, transposition::TT},
+};
 use std::{str::SplitWhitespace, sync::Arc, thread::JoinHandle};
 use tinyvec::ArrayVec;
 
@@ -11,6 +14,8 @@ macro_rules! send {
     }};
 }
 
+const TT_SIZE_MB: usize = 16;
+
 pub struct Uci {
     // canonical position & history used when parsing `position`
     position_board: Board,
@@ -18,6 +23,10 @@ pub struct Uci {
 
     worker: Option<JoinHandle<()>>,
     search_mode: Arc<AtomicSearchMode>,
+
+    history_heuristic: Arc<HistoryHeuristics>,
+    age: u8,
+    tt: Arc<TT>,
 }
 
 impl Uci {
@@ -39,7 +48,9 @@ impl Uci {
 
                 self.position_board = Board::new(STARTPOS_FEN).unwrap();
                 self.position_history = ArrayVec::new();
-                self.worker = None;
+                self.history_heuristic = Arc::new(HistoryHeuristics::new());
+                self.tt = Arc::new(TT::new(TT_SIZE_MB));
+                self.age = 0;
             }
             Some("position") => {
                 if let Err(e) = self.handle_position(tokens) {
@@ -81,6 +92,7 @@ impl Uci {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        self.worker = None;
     }
 
     fn handle_position(&mut self, tokens: &mut SplitWhitespace) -> Result<(), &'static str> {
@@ -159,6 +171,9 @@ impl Uci {
             self.position_board.clone(),
             self.position_history,
             &self.search_mode,
+            &self.history_heuristic,
+            self.age,
+            &self.tt,
         );
 
         self.worker = Some(std::thread::spawn(move || {
@@ -169,6 +184,7 @@ impl Uci {
                 send!("bestmove {}", best_move.to_uci());
             }
         }));
+        self.age = self.age.wrapping_add(1);
     }
 
     pub fn uci_loop(&mut self) {
@@ -198,6 +214,10 @@ impl Uci {
 
             worker: None,
             search_mode: Arc::new(AtomicSearchMode::new(SearchMode::Normal)),
+
+            history_heuristic: Arc::new(HistoryHeuristics::new()),
+            age: 1,
+            tt: Arc::new(TT::new(TT_SIZE_MB)),
         }
     }
 }

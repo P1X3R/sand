@@ -15,7 +15,10 @@ A UCI-compliant chess engine in the alpha-beta framework and a major source of p
 - Alpha-Beta (duhh)
 - Iterative deepening
 - Quiescence
+- Transposition table
 - Move ordering:
+    * PV-move first
+    * TT-move first
     * MVV/LVA
     * Killer heuristic
     * History heuristics

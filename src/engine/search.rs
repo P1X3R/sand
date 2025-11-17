@@ -6,7 +6,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{chess::*, engine::ordering::*, send};
+use crate::{
+    chess::*,
+    engine::{
+        ordering::*,
+        transposition::{Bound, TT},
+    },
+    send,
+};
 use tinyvec::ArrayVec;
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -181,13 +188,15 @@ pub struct Searcher {
     search_mode: Arc<AtomicSearchMode>,
 
     killers: [[Option<Move>; 2]; Searcher::MAX_PLY],
-    history_heuristic: HistoryHeuristics,
+    history_heuristic: Arc<HistoryHeuristics>,
+    age: u8,
+    tt: Arc<TT>,
 }
 
 impl Searcher {
     pub const MAX_PLY: usize = 64;
     const CHECKMATE_SCORE: i16 = 30_000;
-    const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - 2 * Searcher::MAX_PLY as i16;
+    pub const CHECKMATE_THRESHOLD: i16 = Searcher::CHECKMATE_SCORE - 2 * Searcher::MAX_PLY as i16;
     pub const INF: i16 = 32_000;
 
     fn is_three_fold_repetition(&self) -> bool {
@@ -283,7 +292,7 @@ impl Searcher {
         let searching_time_ms = searching_time.as_millis();
 
         send!(
-            "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}",
+            "info depth {} seldepth {} score {} nodes {} nps {} time {} hashfull {} pv {}",
             current_depth,
             self.seldepth,
             score_str,
@@ -294,6 +303,7 @@ impl Searcher {
             } else {
                 searching_time_ms
             },
+            self.tt.get_hashfull(),
             pv_line
                 .iter()
                 .take(current_depth)
@@ -355,6 +365,8 @@ impl Searcher {
         let mut ponder_move: Option<Move> = None;
         let search_start = Instant::now(); // used only for `info` updates
 
+        self.tt.reset_used_counter();
+
         loop {
             let (mut alpha, beta) = (-Searcher::INF, Searcher::INF);
 
@@ -362,7 +374,7 @@ impl Searcher {
             let mut best_score = -Searcher::INF;
             let mut last_info_time = Duration::ZERO;
 
-            let mut scored_moves = score(&move_list, &self.ctx(0));
+            let mut scored_moves = score(&move_list, &self.ctx(0, None));
             for (move_index, mov) in scored_moves.scored_iter().enumerate() {
                 if current_depth > 1 && self.time_to_stop(false) {
                     break;
@@ -473,6 +485,15 @@ impl Searcher {
             return score;
         }
 
+        let entry = self.tt.probe(self.board.zobrist, depth);
+        let hash_move = entry.and_then(|e| Some(e.best_move));
+
+        if let Some(e) = entry
+            && let Some(entry_score) = e.probe(alpha, beta, ply)
+        {
+            return entry_score;
+        }
+
         let color = self.board.side_to_move;
         let max_mate = Searcher::CHECKMATE_SCORE - ply as i16;
         let static_eval = match color {
@@ -488,7 +509,7 @@ impl Searcher {
         let mut best_score = -Searcher::INF;
         let mut found_legal_move = false;
 
-        let mut scored_moves = score(&gen_color_moves(&self.board), &self.ctx(ply));
+        let mut scored_moves = score(&gen_color_moves(&self.board), &self.ctx(ply, hash_move));
         for (move_index, mov) in scored_moves.scored_iter().enumerate() {
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
@@ -518,6 +539,16 @@ impl Searcher {
         }
 
         if found_legal_move {
+            self.tt.store(
+                self.board.zobrist,
+                depth,
+                best_score,
+                self.pv_table.get(ply)[0],
+                Bound::from_score(best_score, alpha, beta),
+                self.age,
+                ply,
+            );
+
             best_score
         } else {
             self.pv_table.clear(ply);
@@ -538,6 +569,15 @@ impl Searcher {
 
         if let Some(score) = Searcher::mate_distance_pruning(ply, alpha, beta) {
             return score;
+        }
+
+        let entry = self.tt.probe(self.board.zobrist, 0);
+        let hash_move = entry.and_then(|e| Some(e.best_move));
+
+        if let Some(e) = entry
+            && let Some(entry_score) = e.probe(alpha, beta, ply)
+        {
+            return entry_score;
         }
 
         let color = self.board.side_to_move;
@@ -580,8 +620,11 @@ impl Searcher {
             gen_capture_promotion_moves(&self.board)
         };
 
+        // null move, sentinel is intentional, used only to store in TT
+        let mut best_move: Move = Move(0);
+
         let mut found_legal_move = false;
-        for mov in score(&move_list, &self.ctx(ply)).scored_iter() {
+        for mov in score(&move_list, &self.ctx(ply, hash_move)).scored_iter() {
             let can_prune = !in_check && can_prune_by_see(mov, &self.board);
 
             let undo = self.push_move(mov);
@@ -603,6 +646,7 @@ impl Searcher {
 
             if score > best_score {
                 best_score = score;
+                best_move = mov;
             }
             if score > alpha {
                 alpha = score;
@@ -613,6 +657,16 @@ impl Searcher {
         }
 
         if found_legal_move {
+            self.tt.store(
+                self.board.zobrist,
+                0,
+                best_score,
+                best_move,
+                Bound::from_score(best_score, alpha, beta),
+                self.age,
+                ply,
+            );
+
             best_score
         } else {
             if in_check {
@@ -627,6 +681,9 @@ impl Searcher {
         board: Board,
         history: ZobristHistory,
         search_mode: &Arc<AtomicSearchMode>,
+        history_heuristic: &Arc<HistoryHeuristics>,
+        age: u8,
+        tt: &Arc<TT>,
     ) -> Searcher {
         Searcher {
             board,
@@ -644,17 +701,20 @@ impl Searcher {
             search_mode: Arc::clone(search_mode),
 
             killers: [[None; 2]; Searcher::MAX_PLY],
-            history_heuristic: HistoryHeuristics::new(),
+            history_heuristic: Arc::clone(history_heuristic),
+            age,
+            tt: Arc::clone(tt),
         }
     }
 
     #[inline(always)]
-    fn ctx(&self, ply: usize) -> SearchContext<'_> {
+    fn ctx(&self, ply: usize, hash_move: Option<Move>) -> SearchContext<'_> {
         SearchContext {
             board: &self.board,
             pv_line: &self.prev_pv,
             killers: &self.killers,
             history_heuristic: &self.history_heuristic,
+            hash_move,
             ply,
         }
     }
