@@ -4,7 +4,7 @@ use crate::{chess::*, engine::search::Searcher};
 
 #[repr(u8)]
 #[derive(Clone, Copy)]
-pub(crate) enum Bound {
+pub enum Bound {
     Exact,
     Upper,
     Lower,
@@ -47,7 +47,7 @@ pub(crate) struct TTEntry {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TTEntryData {
-    depth: u8,
+    pub depth: u8,
     score: i16,
     bound: Bound,
     pub best_move: Move,
@@ -99,7 +99,7 @@ impl TTEntry {
         (self.data.load(Ordering::Acquire) >> EntryEncoding::DEPTH_SHIFT) as usize
     }
     pub fn get_age(&self) -> u8 {
-        (self.data.load(Ordering::Acquire) >> EntryEncoding::AGE_SHIFT) as u8
+        ((self.data.load(Ordering::Acquire) >> EntryEncoding::AGE_SHIFT) & 0xFF) as u8
     }
 
     pub fn store(&self, key: u64, depth: usize, score: i16, mov: Move, bound: Bound, age: u8) {
@@ -110,8 +110,8 @@ impl TTEntry {
             | (bound as u64) << EntryEncoding::BOUND_SHIFT
             | (mov.0 as u64);
 
-        self.data.store(packed, Ordering::Release);
         self.key.store(key, Ordering::Release);
+        self.data.store(packed, Ordering::Release);
     }
 
     pub fn load(&self) -> TTEntryData {
@@ -229,9 +229,9 @@ impl TT {
     }
 
     pub fn get_hashfull(&self) -> u16 {
-        let total = (self.table.len() * BUCKET_SIZE) as usize;
-        let used = self.used.load(Ordering::Relaxed).min(total);
-        ((used * 1000) / total) as u16
+        let total = (self.table.len() * BUCKET_SIZE) as u64;
+        let used = (self.used.load(Ordering::Relaxed) as u64).min(total);
+        ((used * 1000u64) / total) as u16
     }
 
     pub fn reset_used_counter(&self) {

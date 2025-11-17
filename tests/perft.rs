@@ -1,15 +1,20 @@
+mod utils;
+
+use std::io;
+use std::time::{Duration, Instant};
+
 use sand::chess::*;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
-pub struct PerftTTEntry {
+struct PerftTTEntry {
     zobrist: u64,
     nodes: u32,
     depth: u8,
     padding: [u8; 3], // force 16-byte size
 }
 
-pub struct PerftTT {
+struct PerftTT {
     table: Box<[PerftTTEntry]>,
     mask: usize,
 }
@@ -70,7 +75,7 @@ impl PerftTT {
     }
 }
 
-pub fn perft(board: &mut Board, depth: u8, tt: &mut PerftTT) -> u32 {
+fn perft(board: &mut Board, depth: u8, tt: &mut PerftTT) -> u32 {
     debug_assert_eq!(board.zobrist, board.calculate_zobrist());
 
     if depth == 0 {
@@ -95,23 +100,56 @@ pub fn perft(board: &mut Board, depth: u8, tt: &mut PerftTT) -> u32 {
     nodes
 }
 
-pub fn _divide(board: &mut Board, depth: u8, tt: &mut PerftTT) -> u32 {
-    if depth == 0 {
-        return 1;
-    }
+#[test]
+fn edp_test() -> io::Result<()> {
+    const TT_SIZE_MB: usize = 128;
+    const PERFT_DEPTH: usize = 4;
 
-    let mut nodes = 0;
+    let mut table = PerftTT::new(TT_SIZE_MB);
+    let mut total_nodes = 0;
+    let mut total_elapsed = Duration::ZERO;
 
-    for mov in gen_color_moves(board) {
-        let undo = board.make_move(mov);
-        if is_legal_move(mov, board) {
-            debug_assert_eq!(board.zobrist, board.calculate_zobrist());
-            let subtree_nodes = perft(board, depth - 1, tt);
-            nodes += subtree_nodes;
-            println!("{}: {}", mov.to_uci(), subtree_nodes);
+    for line in utils::LARGE_TEST_EPDS {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 10 {
+            continue;
         }
-        board.undo_move(&undo);
+
+        let fen = fields[..6].join(" ");
+        println!("{fen}");
+
+        let expected: Vec<u32> = fields
+            .iter()
+            .skip(7) // skip fen
+            .step_by(2) // skip `;D<depth>` comment
+            .take(PERFT_DEPTH)
+            .map(|nodes| nodes.parse::<u32>().expect("Invalid digit"))
+            .collect();
+
+        let mut board = Board::new(&fen).unwrap();
+
+        for (idx, &expected_nodes) in expected.iter().enumerate() {
+            let depth = (idx + 1) as u8;
+            let depth_start = Instant::now();
+            let nodes = perft(&mut board, depth, &mut table);
+            let elapsed = depth_start.elapsed();
+
+            total_nodes += nodes;
+            total_elapsed += elapsed;
+
+            println!(
+                "Depth {depth}: {nodes}; Expected nodes: {expected_nodes}; Time: {:?}",
+                elapsed
+            );
+            assert_eq!(nodes, expected_nodes);
+        }
+        println!();
     }
 
-    nodes
+    println!(
+        "Estimated: {:.0} N/s",
+        total_nodes as f64 / total_elapsed.as_secs_f64(),
+    );
+
+    Ok(())
 }
