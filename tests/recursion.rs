@@ -9,7 +9,7 @@ const INF: i16 = 32_000;
 fn alpha_beta(
     board: &mut Board,
     mut alpha: i16,
-    beta: i16,
+    mut beta: i16,
     depth: usize,
     ply: usize,
     age: u8,
@@ -28,7 +28,7 @@ fn alpha_beta(
         let entry = tt.probe(board.zobrist, depth);
         if let Some(e) = entry
             && e.depth == depth as u8
-            && let Some(score) = e.probe(alpha, beta, ply)
+            && let Some(score) = e.probe(&mut alpha, &mut beta, ply)
         {
             return score;
         }

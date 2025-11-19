@@ -85,7 +85,16 @@ pub fn can_prune_by_see(mov: Move, board: &Board) -> bool {
 
     let from: Square = mov.get_from();
     let to: Square = mov.get_to();
-    let (victim, _): (Piece, Color) = board.pieces[to as usize];
+    let (victim, _): (Piece, Color) = match flags.move_type {
+        MoveType::Capture => board.pieces[to as usize],
+        MoveType::EnPassantCapture => {
+            board.pieces[match board.side_to_move {
+                Color::White => to - BOARD_WIDTH as Square,
+                Color::Black => to + BOARD_WIDTH as Square,
+            } as usize]
+        }
+        _ => unreachable!(),
+    };
     let (attacker, _): (Piece, Color) = board.pieces[from as usize];
     let attacker = if flags.promotion != Piece::None {
         flags.promotion
@@ -157,10 +166,10 @@ fn see_ge(
 }
 
 fn score_move(mov: Move, search_ctx: &SearchContext) -> i16 {
-    if search_ctx.pv_line.get(search_ctx.ply) == Some(&mov) {
+    if search_ctx.hash_move == Some(mov) {
         return Searcher::INF;
     }
-    if search_ctx.hash_move == Some(mov) {
+    if search_ctx.pv_line.get(search_ctx.ply) == Some(&mov) {
         return Searcher::INF - 1;
     }
 

@@ -50,7 +50,7 @@ impl Uci {
                 self.position_history = ArrayVec::new();
                 self.history_heuristic = Arc::new(HistoryHeuristics::new());
                 self.tt = Arc::new(TT::new(TT_SIZE_MB));
-                self.age = 0;
+                self.age = 1;
             }
             Some("position") => {
                 if let Err(e) = self.handle_position(tokens) {
@@ -115,7 +115,7 @@ impl Uci {
                 // check pseudo-legality
                 let move_list = gen_color_moves(&self.position_board);
                 let Some(&mov) = move_list.iter().find(|m| m.to_uci() == move_uci) else {
-                    continue; // Silently ignore invalid moves
+                    continue; // silently ignore invalid moves
                 };
 
                 self.position_board.make_move(mov);

@@ -206,9 +206,8 @@ impl Searcher {
             .take(self.board.halfmove_clock as usize)
             .step_by(2) // check only positions with same side to move
             .filter(|&&zobrist| zobrist == self.board.zobrist)
-            .take(2)
             .count()
-            >= 2
+            >= 3
     }
 
     fn is_draw(&self) -> bool {
@@ -230,6 +229,9 @@ impl Searcher {
     }
 
     pub fn start_search(&mut self, control: TimeControl) -> (Move, Option<Move>) {
+        // guard stop flag
+        self.search_mode.store(SearchMode::Normal);
+
         self.time_control = control.clone();
         self.time = match control {
             TimeControl::ClockTime(ct) => {
@@ -365,8 +367,6 @@ impl Searcher {
         let mut ponder_move: Option<Move> = None;
         let search_start = Instant::now(); // used only for `info` updates
 
-        self.tt.reset_used_counter();
-
         loop {
             let (mut alpha, beta) = (-Searcher::INF, Searcher::INF);
 
@@ -454,10 +454,10 @@ impl Searcher {
         let min_mate = -Searcher::CHECKMATE_SCORE + ply as i16;
 
         if alpha >= max_mate {
-            return Some(alpha);
+            return Some(max_mate);
         }
         if beta <= min_mate {
-            return Some(beta);
+            return Some(min_mate);
         }
 
         None
@@ -467,7 +467,7 @@ impl Searcher {
     fn search(
         &mut self,
         mut alpha: i16,
-        beta: i16,
+        mut beta: i16,
         depth: usize,
         ply: usize,
         in_check: bool,
@@ -481,6 +481,8 @@ impl Searcher {
             self.seldepth = ply;
         }
 
+        self.pv_table.clear(ply);
+
         if let Some(score) = Searcher::mate_distance_pruning(ply, alpha, beta) {
             return score;
         }
@@ -489,7 +491,7 @@ impl Searcher {
         let hash_move = entry.and_then(|e| Some(e.best_move));
 
         if let Some(e) = entry
-            && let Some(entry_score) = e.probe(alpha, beta, ply)
+            && let Some(entry_score) = e.probe(&mut alpha, &mut beta, ply)
         {
             return entry_score;
         }
@@ -502,13 +504,14 @@ impl Searcher {
         };
 
         if self.is_draw() {
-            self.pv_table.clear(ply);
             return Searcher::get_draw_score(static_eval);
         }
 
+        let mut best_move = Move(0);
         let mut best_score = -Searcher::INF;
         let mut found_legal_move = false;
 
+        let mut first = true;
         let mut scored_moves = score(&gen_color_moves(&self.board), &self.ctx(ply, hash_move));
         for (move_index, mov) in scored_moves.scored_iter().enumerate() {
             let undo = self.push_move(mov);
@@ -519,22 +522,34 @@ impl Searcher {
 
             found_legal_move = true;
             let gives_check = is_king_attcked(self.board.side_to_move, &self.board);
-            let score = -self.search(-beta, -alpha, depth - 1, ply + 1, gives_check);
+
+            let mut score;
+            if first {
+                first = false;
+                score = -self.search(-beta, -alpha, depth - 1, ply + 1, gives_check);
+            } else {
+                score = -self.search(-alpha - 1, -alpha, depth - 1, ply + 1, gives_check);
+                if score > alpha && score < beta {
+                    score = -self.search(-beta, -alpha, depth - 1, ply + 1, gives_check);
+                }
+            }
+
             self.pop_move(&undo);
 
             if score > best_score {
                 best_score = score;
-                self.pv_table.update(ply, mov);
+                best_move = mov;
             }
             if score > alpha {
                 alpha = score;
+                self.pv_table.update(ply, mov);
             }
             if alpha >= beta {
                 self.update_heuristics(ply, depth, mov, &scored_moves, move_index);
-                return alpha;
+                break;
             }
             if self.time_to_stop(false) {
-                return alpha;
+                return best_score;
             }
         }
 
@@ -543,7 +558,7 @@ impl Searcher {
                 self.board.zobrist,
                 depth,
                 best_score,
-                self.pv_table.get(ply)[0],
+                best_move,
                 Bound::from_score(best_score, alpha, beta),
                 self.age,
                 ply,
@@ -561,7 +576,7 @@ impl Searcher {
         }
     }
 
-    fn quiescence(&mut self, mut alpha: i16, beta: i16, ply: usize, in_check: bool) -> i16 {
+    fn quiescence(&mut self, mut alpha: i16, mut beta: i16, ply: usize, in_check: bool) -> i16 {
         self.nodes += 1;
         if ply > self.seldepth {
             self.seldepth = ply;
@@ -575,7 +590,7 @@ impl Searcher {
         let hash_move = entry.and_then(|e| Some(e.best_move));
 
         if let Some(e) = entry
-            && let Some(entry_score) = e.probe(alpha, beta, ply)
+            && let Some(entry_score) = e.probe(&mut alpha, &mut beta, ply)
         {
             return entry_score;
         }
@@ -619,13 +634,15 @@ impl Searcher {
         } else {
             gen_capture_promotion_moves(&self.board)
         };
+        let search_ctx = &self.ctx(ply, hash_move);
+        let mut scored_move_list = score(&move_list, search_ctx);
 
         // null move, sentinel is intentional, used only to store in TT
         let mut best_move: Move = Move(0);
 
         let mut found_legal_move = false;
-        for mov in score(&move_list, &self.ctx(ply, hash_move)).scored_iter() {
-            let can_prune = !in_check && can_prune_by_see(mov, &self.board);
+        for mov in scored_move_list.scored_iter() {
+            let can_prune = can_prune_by_see(mov, &self.board);
 
             let undo = self.push_move(mov);
             if !is_legal_move(mov, &self.board) {
@@ -636,7 +653,7 @@ impl Searcher {
             let gives_check = is_king_attcked(self.board.side_to_move, &self.board);
 
             found_legal_move = true;
-            if can_prune && !gives_check {
+            if can_prune && !gives_check && !in_check && Some(mov) != hash_move {
                 self.pop_move(&undo);
                 continue;
             }
@@ -651,8 +668,11 @@ impl Searcher {
             if score > alpha {
                 alpha = score;
             }
-            if alpha >= beta || self.time_to_stop(false) {
-                return alpha;
+            if alpha >= beta {
+                break;
+            }
+            if self.time_to_stop(false) {
+                return best_score;
             }
         }
 

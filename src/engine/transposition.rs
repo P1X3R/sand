@@ -64,15 +64,34 @@ impl TTEntryData {
         }
     }
 
-    pub fn probe(&self, alpha: i16, beta: i16, ply: usize) -> Option<i16> {
-        let decoded_score = TTEntryData::decode_mate(self.score, ply);
+    pub fn probe(&self, alpha: &mut i16, beta: &mut i16, ply: usize) -> Option<i16> {
+        let score = TTEntryData::decode_mate(self.score, ply);
 
         match self.bound {
-            Bound::Exact => Some(decoded_score),
-            Bound::Lower if decoded_score >= beta => Some(decoded_score),
-            Bound::Upper if decoded_score <= alpha => Some(decoded_score),
-            _ => None,
+            Bound::Exact => {
+                // We know the exact minimax score here.
+                return Some(score);
+            }
+            Bound::Lower => {
+                // This is a lower bound: true score >= this.
+                if score > *alpha {
+                    *alpha = score;
+                }
+            }
+            Bound::Upper => {
+                // This is an upper bound: true score <= this.
+                if score < *beta {
+                    *beta = score;
+                }
+            }
         }
+
+        if *alpha >= *beta {
+            // Bound proved a cutoff.
+            return Some(score);
+        }
+
+        None
     }
 }
 
@@ -232,9 +251,5 @@ impl TT {
         let total = (self.table.len() * BUCKET_SIZE) as u64;
         let used = (self.used.load(Ordering::Relaxed) as u64).min(total);
         ((used * 1000u64) / total) as u16
-    }
-
-    pub fn reset_used_counter(&self) {
-        self.used.store(0, Ordering::Relaxed);
     }
 }

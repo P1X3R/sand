@@ -12,13 +12,13 @@ A UCI-compliant chess engine in the alpha-beta framework and a major source of p
 - 8x8 board (for fast look-up)
 
 ### Search
-- Alpha-Beta (duhh)
+- PVS
 - Iterative deepening
 - Quiescence
 - Transposition table
 - Move ordering:
-    * PV-move first
     * TT-move first
+    * PV-move first
     * MVV/LVA
     * Killer heuristic
     * History heuristics
